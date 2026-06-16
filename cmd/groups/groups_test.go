@@ -14,13 +14,24 @@ import (
 )
 
 // doRequest serves a single request against the app and returns the recorder.
+// It defaults the required `user` query parameter to "tester" so tests that
+// aren't exercising the user requirement don't have to set it explicitly.
 func doRequest(app *App, method, target, body string) *httptest.ResponseRecorder {
-	var reader *strings.Reader
-	if body != "" {
-		reader = strings.NewReader(body)
-	} else {
-		reader = strings.NewReader("")
+	return doRequestAs(app, method, target, body, "tester")
+}
+
+// doRequestAs serves a request with an explicit acting user. An empty user
+// sends no `user` query parameter at all.
+func doRequestAs(app *App, method, target, body, user string) *httptest.ResponseRecorder {
+	if user != "" && !strings.Contains(target, "user=") {
+		if strings.Contains(target, "?") {
+			target += "&user=" + user
+		} else {
+			target += "?user=" + user
+		}
 	}
+
+	reader := strings.NewReader(body)
 	req := httptest.NewRequest(method, target, reader)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

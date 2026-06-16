@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/permissions"
 	"github.com/labstack/echo/v4"
 )
 
@@ -39,7 +40,12 @@ type membersResults struct {
 //	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id}/members [get]
 func (a *App) GetMembersHandler(c echo.Context) error {
-	members, err := a.keycloak.GroupMembers(c.Request().Context(), c.Param("id"))
+	groupID := c.Param("id")
+	if err := a.requireReadOrMember(c, groupID); err != nil {
+		return err
+	}
+
+	members, err := a.keycloak.GroupMembers(c.Request().Context(), groupID)
 	if err != nil {
 		return keycloakError(err)
 	}
@@ -56,6 +62,9 @@ func (a *App) GetMembersHandler(c echo.Context) error {
 //	@Success	200	{object}	membersResults
 //	@Router	/groups/{id}/members [post]
 func (a *App) AddMembersHandler(c echo.Context) error {
+	if err := a.requireLevel(c, c.Param("id"), permissions.LevelWrite); err != nil {
+		return err
+	}
 	return a.bulkMembership(c, a.keycloak.AddMember)
 }
 
@@ -69,6 +78,9 @@ func (a *App) AddMembersHandler(c echo.Context) error {
 //	@Success	200	{object}	membersResults
 //	@Router	/groups/{id}/members/deleter [post]
 func (a *App) RemoveMembersHandler(c echo.Context) error {
+	if err := a.requireLevel(c, c.Param("id"), permissions.LevelWrite); err != nil {
+		return err
+	}
 	return a.bulkMembership(c, a.keycloak.RemoveMember)
 }
 
@@ -87,6 +99,10 @@ func (a *App) RemoveMembersHandler(c echo.Context) error {
 func (a *App) ReplaceMembersHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 	groupID := c.Param("id")
+
+	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+		return err
+	}
 
 	var req membersRequest
 	if err := c.Bind(&req); err != nil {
@@ -134,7 +150,11 @@ func (a *App) ReplaceMembersHandler(c echo.Context) error {
 //	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id}/members/{subject} [put]
 func (a *App) AddMemberHandler(c echo.Context) error {
-	if err := a.keycloak.AddMember(c.Request().Context(), c.Param("id"), c.Param("subject")); err != nil {
+	groupID := c.Param("id")
+	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+		return err
+	}
+	if err := a.keycloak.AddMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
 		return keycloakError(err)
 	}
 	return c.NoContent(http.StatusOK)
@@ -149,7 +169,11 @@ func (a *App) AddMemberHandler(c echo.Context) error {
 //	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id}/members/{subject} [delete]
 func (a *App) RemoveMemberHandler(c echo.Context) error {
-	if err := a.keycloak.RemoveMember(c.Request().Context(), c.Param("id"), c.Param("subject")); err != nil {
+	groupID := c.Param("id")
+	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+		return err
+	}
+	if err := a.keycloak.RemoveMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
 		return keycloakError(err)
 	}
 	return c.NoContent(http.StatusOK)

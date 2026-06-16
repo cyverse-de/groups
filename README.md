@@ -55,6 +55,25 @@ Membership:
 - `PUT /groups/:id/members/:subject` — add a single member.
 - `DELETE /groups/:id/members/:subject` — remove a single member.
 
-Authorization, the `/groups/:id/permissions` endpoints, subject lookups, and
-AMQP change events are added in subsequent milestones; see the implementation
-plan.
+The `/groups/:id/permissions` endpoints, subject lookups, and AMQP change events
+are added in subsequent milestones; see the implementation plan.
+
+## Authorization
+
+This service is not the OIDC boundary. Following the DE convention, `terrain`
+validates the user's token and passes the acting user via a `user` query
+parameter over intra-cluster traffic, which this service trusts. Every `/groups`
+request must include `?user=<username>`.
+
+Group-management rights are stored in the permissions service as grants on the
+`group` resource type. The service enforces this matrix before each operation:
+
+| Operation | Required |
+| --- | --- |
+| create a group | any authenticated user (the creator is granted `own`) |
+| get a group / list members | `read` or membership in the group |
+| update a group / manage members | `write` |
+| delete a group | `own` |
+
+The creator of a group is granted `own` automatically; if that grant fails the
+group is rolled back. Deleting a group also removes its permissions resource.

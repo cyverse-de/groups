@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/permissions"
 	"github.com/knadh/koanf"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -15,9 +17,10 @@ const version = "0.1.0"
 
 // App ties together the HTTP API and the clients that back it.
 type App struct {
-	config   *koanf.Koanf
-	router   *echo.Echo
-	keycloak keycloak.Client
+	config      *koanf.Koanf
+	router      *echo.Echo
+	keycloak    keycloak.Client
+	permissions permissions.Client
 }
 
 // NewApp constructs the application, wires up its clients, and registers routes.
@@ -28,14 +31,37 @@ func NewApp(config *koanf.Koanf) (*App, error) {
 	}
 
 	app := &App{
-		config:   config,
-		router:   echo.New(),
-		keycloak: kc,
+		config:      config,
+		router:      echo.New(),
+		keycloak:    kc,
+		permissions: permissions.NewClient(permissionsBaseURL(config)),
 	}
 
+	app.ensureResourceType()
 	app.registerRoutes()
 
 	return app, nil
+}
+
+// permissionsBaseURL returns the configured permissions service URL, defaulting
+// to the in-cluster service name.
+func permissionsBaseURL(config *koanf.Koanf) string {
+	if base := config.String("permissions.base"); base != "" {
+		return base
+	}
+	return "http://permissions"
+}
+
+// ensureResourceType registers the "group" resource type with the permissions
+// service. Failure is logged but not fatal: the permissions service may not be
+// reachable at startup, and subsequent grants will surface a clear error.
+func (a *App) ensureResourceType() {
+	err := a.permissions.EnsureResourceType(context.Background(), resourceTypeGroup,
+		"A CyVerse Discovery Environment group managed in Keycloak.")
+	if err != nil {
+		log.WithField("context", "startup").
+			Warnf("could not register the %q resource type with the permissions service: %s", resourceTypeGroup, err)
+	}
 }
 
 // registerRoutes wires up middleware, the error handler, and all HTTP routes.
@@ -46,6 +72,7 @@ func (a *App) registerRoutes() {
 	a.router.GET("/", a.StatusHandler).Name = "status"
 
 	groups := a.router.Group("/groups")
+	groups.Use(requireUser)
 	groups.GET("", a.SearchGroupsHandler)
 	groups.POST("", a.AddGroupHandler)
 	groups.GET("/:id", a.GetGroupHandler)

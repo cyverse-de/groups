@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/permissions"
 	"github.com/labstack/echo/v4"
 )
 
@@ -54,7 +55,12 @@ func (a *App) SearchGroupsHandler(c echo.Context) error {
 //	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id} [get]
 func (a *App) GetGroupHandler(c echo.Context) error {
-	g, err := a.keycloak.GetGroup(c.Request().Context(), c.Param("id"))
+	groupID := c.Param("id")
+	if err := a.requireReadOrMember(c, groupID); err != nil {
+		return err
+	}
+
+	g, err := a.keycloak.GetGroup(c.Request().Context(), groupID)
 	if err != nil {
 		return keycloakError(err)
 	}
@@ -76,10 +82,24 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 		return err
 	}
 
-	g, err := a.keycloak.CreateGroup(c.Request().Context(), specFromRequest(req))
+	ctx := c.Request().Context()
+	user := actingUser(c)
+
+	g, err := a.keycloak.CreateGroup(ctx, specFromRequest(req))
 	if err != nil {
 		return keycloakError(err)
 	}
+
+	// Make the creator the owner of the new group. If the grant fails, roll the
+	// group back so we don't leave an unmanageable, ownerless group behind.
+	if err := a.permissions.Grant(ctx, resourceTypeGroup, g.ID, permissions.SubjectTypeUser, user, permissions.LevelOwn); err != nil {
+		if delErr := a.keycloak.DeleteGroup(ctx, g.ID); delErr != nil {
+			log.WithField("context", "create-group").
+				Errorf("failed to roll back group %s after a permissions grant failure: %s", g.ID, delErr)
+		}
+		return err
+	}
+
 	return c.JSON(http.StatusOK, g)
 }
 
@@ -95,12 +115,17 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 //	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id} [put]
 func (a *App) UpdateGroupHandler(c echo.Context) error {
+	groupID := c.Param("id")
+	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+		return err
+	}
+
 	req, err := bindGroupRequest(c)
 	if err != nil {
 		return err
 	}
 
-	g, err := a.keycloak.UpdateGroup(c.Request().Context(), c.Param("id"), specFromRequest(req))
+	g, err := a.keycloak.UpdateGroup(c.Request().Context(), groupID, specFromRequest(req))
 	if err != nil {
 		return keycloakError(err)
 	}
@@ -115,9 +140,23 @@ func (a *App) UpdateGroupHandler(c echo.Context) error {
 //	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id} [delete]
 func (a *App) DeleteGroupHandler(c echo.Context) error {
-	if err := a.keycloak.DeleteGroup(c.Request().Context(), c.Param("id")); err != nil {
+	groupID := c.Param("id")
+	if err := a.requireLevel(c, groupID, permissions.LevelOwn); err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := a.keycloak.DeleteGroup(ctx, groupID); err != nil {
 		return keycloakError(err)
 	}
+
+	// Clean up the permissions resource. Best-effort: the group is already gone,
+	// so a failure here should not fail the request.
+	if err := a.permissions.DeleteResource(ctx, resourceTypeGroup, groupID); err != nil && !errors.Is(err, permissions.ErrNotFound) {
+		log.WithField("context", "delete-group").
+			Warnf("could not remove the permissions resource for group %s: %s", groupID, err)
+	}
+
 	return c.NoContent(http.StatusOK)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/permissions"
 	"github.com/labstack/echo/v4"
 )
 
@@ -111,12 +112,82 @@ func (m *mockKeycloak) SubjectGroups(ctx context.Context, username string) ([]ke
 	return nil, nil
 }
 
-// newTestApp builds an App backed by the given mock client with all routes
-// registered, ready to serve test requests.
+// mockPermissions is a configurable stub implementation of permissions.Client.
+type mockPermissions struct {
+	ensureResourceTypeFn func(ctx context.Context, name, description string) error
+	grantFn              func(ctx context.Context, resourceType, resourceName, subjectType, subjectID, level string) error
+	revokeFn             func(ctx context.Context, resourceType, resourceName, subjectType, subjectID string) error
+	checkFn              func(ctx context.Context, subjectType, subjectID, resourceType, resourceName, minLevel string, lookup bool) (bool, error)
+	listResourceFn       func(ctx context.Context, resourceType, resourceName string) ([]permissions.Permission, error)
+	deleteResourceFn     func(ctx context.Context, resourceType, resourceName string) error
+}
+
+var _ permissions.Client = (*mockPermissions)(nil)
+
+func (m *mockPermissions) EnsureResourceType(ctx context.Context, name, description string) error {
+	if m.ensureResourceTypeFn != nil {
+		return m.ensureResourceTypeFn(ctx, name, description)
+	}
+	return nil
+}
+
+func (m *mockPermissions) Grant(ctx context.Context, resourceType, resourceName, subjectType, subjectID, level string) error {
+	if m.grantFn != nil {
+		return m.grantFn(ctx, resourceType, resourceName, subjectType, subjectID, level)
+	}
+	return nil
+}
+
+func (m *mockPermissions) Revoke(ctx context.Context, resourceType, resourceName, subjectType, subjectID string) error {
+	if m.revokeFn != nil {
+		return m.revokeFn(ctx, resourceType, resourceName, subjectType, subjectID)
+	}
+	return nil
+}
+
+func (m *mockPermissions) Check(ctx context.Context, subjectType, subjectID, resourceType, resourceName, minLevel string, lookup bool) (bool, error) {
+	if m.checkFn != nil {
+		return m.checkFn(ctx, subjectType, subjectID, resourceType, resourceName, minLevel, lookup)
+	}
+	return false, nil
+}
+
+func (m *mockPermissions) ListResource(ctx context.Context, resourceType, resourceName string) ([]permissions.Permission, error) {
+	if m.listResourceFn != nil {
+		return m.listResourceFn(ctx, resourceType, resourceName)
+	}
+	return nil, nil
+}
+
+func (m *mockPermissions) DeleteResource(ctx context.Context, resourceType, resourceName string) error {
+	if m.deleteResourceFn != nil {
+		return m.deleteResourceFn(ctx, resourceType, resourceName)
+	}
+	return nil
+}
+
+// allowAllPermissions returns a mock permissions client that authorizes every
+// check, for tests that aren't exercising authorization itself.
+func allowAllPermissions() *mockPermissions {
+	return &mockPermissions{
+		checkFn: func(context.Context, string, string, string, string, string, bool) (bool, error) {
+			return true, nil
+		},
+	}
+}
+
+// newTestApp builds an App backed by the given Keycloak mock and an allow-all
+// permissions mock, with all routes registered.
 func newTestApp(kc keycloak.Client) *App {
+	return newTestAppWith(kc, allowAllPermissions())
+}
+
+// newTestAppWith builds an App backed by the given mock clients.
+func newTestAppWith(kc keycloak.Client, perms permissions.Client) *App {
 	app := &App{
-		router:   echo.New(),
-		keycloak: kc,
+		router:      echo.New(),
+		keycloak:    kc,
+		permissions: perms,
 	}
 	app.registerRoutes()
 	return app
