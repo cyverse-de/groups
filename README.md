@@ -61,8 +61,15 @@ Permissions:
 - `PUT /groups/:id/permissions/:subject-type/:subject-id` — grant a subject a level (`{level}`).
 - `DELETE /groups/:id/permissions/:subject-type/:subject-id` — revoke a subject's permission.
 
-Subject lookups and AMQP change events are added in subsequent milestones; see
-the implementation plan.
+Subjects:
+
+- `GET /subjects?search=` — search subjects.
+- `POST /subjects/lookup` — look up multiple subjects by ID (`{subject_ids: [...]}`).
+- `GET /subjects/:subject-id` — get a subject.
+- `GET /subjects/:subject-id/groups` — list the groups a subject belongs to.
+
+AMQP change events are added in a subsequent milestone; see the implementation
+plan.
 
 ## Authorization
 

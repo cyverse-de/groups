@@ -87,6 +87,13 @@ func (a *App) registerRoutes() {
 	groups.GET("/:id/permissions", a.ListPermissionsHandler)
 	groups.PUT("/:id/permissions/:subject-type/:subject-id", a.GrantPermissionHandler)
 	groups.DELETE("/:id/permissions/:subject-type/:subject-id", a.RevokePermissionHandler)
+
+	subjects := a.router.Group("/subjects")
+	subjects.Use(requireUser)
+	subjects.GET("", a.SearchSubjectsHandler)
+	subjects.POST("/lookup", a.LookupSubjectsHandler)
+	subjects.GET("/:subject-id", a.GetSubjectHandler)
+	subjects.GET("/:subject-id/groups", a.SubjectGroupsHandler)
 }
 
 // Router returns the underlying echo router so it can be served.
