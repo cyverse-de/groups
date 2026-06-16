@@ -1,0 +1,25 @@
+# Example configuration for the groups service.
+#
+# Values may also be supplied via environment variables prefixed with GROUPS_
+# (e.g. GROUPS_KEYCLOAK_CLIENT_SECRET) or a dotenv file.
+
+# Keycloak connection settings. The service authenticates as a confidential
+# client using the client-credentials grant; the client's service account must
+# have the realm-management roles needed to manage groups, members, and users.
+keycloak:
+  base-url: https://keycloak.example.org/auth
+  realm: example
+  client-id: groups-service
+  client-secret: changeme
+  # Optional parent group under which all managed groups are created. Leave
+  # empty to create groups at the top level of the realm.
+  parent-group: ""
+
+# Base URL of the DE permissions service used for group authorization.
+permissions:
+  base: http://permissions
+
+# AMQP settings for publishing group-change (reindex) events.
+amqp:
+  uri: amqp://guest:guest@rabbit:5672/
+  exchange: de

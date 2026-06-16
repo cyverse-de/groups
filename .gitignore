@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# Compiled service binary (produced by `just`)
+/bin/
+
 # Test binary, built with `go test -c`
 *.test
 
