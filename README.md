@@ -68,8 +68,13 @@ Subjects:
 - `GET /subjects/:subject-id` — get a subject.
 - `GET /subjects/:subject-id/groups` — list the groups a subject belongs to.
 
-AMQP change events are added in a subsequent milestone; see the implementation
-plan.
+## Events
+
+When a group is created, updated, deleted, or has its membership changed, the
+service publishes a message to the configured AMQP topic exchange with a routing
+key of `index.group.<id>` and a JSON body of `{"message":"","timestamp_ms":<ms>}`,
+matching iplant-groups so existing reindexing consumers keep working. Eventing is
+disabled when `amqp.uri` is not configured.
 
 ## Authorization
 

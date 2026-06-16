@@ -138,6 +138,7 @@ func (a *App) ReplaceMembersHandler(c echo.Context) error {
 		}
 	}
 
+	a.publishGroupChanged(c, groupID)
 	return c.JSON(http.StatusOK, &membersResults{Results: results})
 }
 
@@ -157,6 +158,7 @@ func (a *App) AddMemberHandler(c echo.Context) error {
 	if err := a.keycloak.AddMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
 		return keycloakError(err)
 	}
+	a.publishGroupChanged(c, groupID)
 	return c.NoContent(http.StatusOK)
 }
 
@@ -176,6 +178,7 @@ func (a *App) RemoveMemberHandler(c echo.Context) error {
 	if err := a.keycloak.RemoveMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
 		return keycloakError(err)
 	}
+	a.publishGroupChanged(c, groupID)
 	return c.NoContent(http.StatusOK)
 }
 
@@ -198,6 +201,7 @@ func (a *App) bulkMembership(c echo.Context, op membershipFunc) error {
 		results = append(results, runMembership(ctx, op, groupID, username))
 	}
 
+	a.publishGroupChanged(c, groupID)
 	return c.JSON(http.StatusOK, &membersResults{Results: results})
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/cyverse-de/groups/eventing"
 	"github.com/cyverse-de/groups/keycloak"
 	"github.com/cyverse-de/groups/permissions"
 	"github.com/knadh/koanf"
@@ -21,6 +22,7 @@ type App struct {
 	router      *echo.Echo
 	keycloak    keycloak.Client
 	permissions permissions.Client
+	events      eventing.Publisher
 }
 
 // NewApp constructs the application, wires up its clients, and registers routes.
@@ -30,17 +32,49 @@ func NewApp(config *koanf.Koanf) (*App, error) {
 		return nil, err
 	}
 
+	events, err := eventingFromConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
 	app := &App{
 		config:      config,
 		router:      echo.New(),
 		keycloak:    kc,
 		permissions: permissions.NewClient(permissionsBaseURL(config)),
+		events:      events,
 	}
 
 	app.ensureResourceType()
 	app.registerRoutes()
 
 	return app, nil
+}
+
+// eventingFromConfig builds the change-event publisher. When amqp.uri is not
+// configured, eventing is disabled and a no-op publisher is returned.
+func eventingFromConfig(config *koanf.Koanf) (eventing.Publisher, error) {
+	uri := config.String("amqp.uri")
+	if uri == "" {
+		log.WithField("context", "startup").Info("AMQP eventing disabled: amqp.uri is not configured")
+		return eventing.NoopPublisher{}, nil
+	}
+
+	exchange := config.String("amqp.exchange")
+	if exchange == "" {
+		exchange = "de"
+	}
+	return eventing.NewAMQPPublisher(uri, exchange)
+}
+
+// publishGroupChanged publishes a change event for a group. Failures are logged
+// but not returned: the group operation has already succeeded, and the event is
+// only a reindex hint.
+func (a *App) publishGroupChanged(c echo.Context, groupID string) {
+	if err := a.events.GroupChanged(c.Request().Context(), groupID); err != nil {
+		log.WithField("context", "eventing").
+			Warnf("could not publish a change event for group %s: %s", groupID, err)
+	}
 }
 
 // permissionsBaseURL returns the configured permissions service URL, defaulting

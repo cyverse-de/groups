@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"sync"
 
+	"github.com/cyverse-de/groups/eventing"
 	"github.com/cyverse-de/groups/keycloak"
 	"github.com/cyverse-de/groups/permissions"
 	"github.com/labstack/echo/v4"
@@ -176,18 +178,42 @@ func allowAllPermissions() *mockPermissions {
 	}
 }
 
+// recordingPublisher records the IDs of groups it was asked to publish changes
+// for, so tests can assert that events were emitted.
+type recordingPublisher struct {
+	mu      sync.Mutex
+	changed []string
+}
+
+func (p *recordingPublisher) GroupChanged(_ context.Context, groupID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.changed = append(p.changed, groupID)
+	return nil
+}
+
+func (p *recordingPublisher) Close() error { return nil }
+
+func (p *recordingPublisher) ids() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.changed...)
+}
+
 // newTestApp builds an App backed by the given Keycloak mock and an allow-all
 // permissions mock, with all routes registered.
 func newTestApp(kc keycloak.Client) *App {
 	return newTestAppWith(kc, allowAllPermissions())
 }
 
-// newTestAppWith builds an App backed by the given mock clients.
+// newTestAppWith builds an App backed by the given mock clients and a no-op
+// event publisher.
 func newTestAppWith(kc keycloak.Client, perms permissions.Client) *App {
 	app := &App{
 		router:      echo.New(),
 		keycloak:    kc,
 		permissions: perms,
+		events:      eventing.NoopPublisher{},
 	}
 	app.registerRoutes()
 	return app

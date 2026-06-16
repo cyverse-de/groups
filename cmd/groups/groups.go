@@ -100,6 +100,7 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 		return err
 	}
 
+	a.publishGroupChanged(c, g.ID)
 	return c.JSON(http.StatusOK, g)
 }
 
@@ -129,6 +130,8 @@ func (a *App) UpdateGroupHandler(c echo.Context) error {
 	if err != nil {
 		return keycloakError(err)
 	}
+
+	a.publishGroupChanged(c, groupID)
 	return c.JSON(http.StatusOK, g)
 }
 
@@ -157,6 +160,7 @@ func (a *App) DeleteGroupHandler(c echo.Context) error {
 			Warnf("could not remove the permissions resource for group %s: %s", groupID, err)
 	}
 
+	a.publishGroupChanged(c, groupID)
 	return c.NoContent(http.StatusOK)
 }
 
