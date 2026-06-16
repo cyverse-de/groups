@@ -20,6 +20,7 @@ to store and manage groups. It is the intended replacement for `iplant-groups`
 ```bash
 just              # build the bin/groups binary
 just test         # run tests
+just docs         # regenerate the Swagger docs in docs/
 just build-image  # build the container image
 go build ./...    # build all packages
 ```
@@ -37,6 +38,7 @@ Environment variables are read with the `GROUPS_` prefix (e.g.
 ## Endpoints
 
 - `GET /` — service information and Keycloak connectivity (liveness/readiness probe).
+- `GET /docs/` — Swagger UI for the API.
 
 Groups:
 

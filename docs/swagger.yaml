@@ -1,0 +1,608 @@
+basePath: /
+definitions:
+  keycloak.Group:
+    properties:
+      description:
+        type: string
+      display_extension:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  keycloak.Subject:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      id:
+        type: string
+      institution:
+        type: string
+      last_name:
+        type: string
+      name:
+        type: string
+      source_id:
+        type: string
+    type: object
+  main.StatusResponse:
+    properties:
+      keycloak:
+        type: boolean
+      service:
+        type: string
+      version:
+        type: string
+    type: object
+  main.groupListResponse:
+    properties:
+      groups:
+        items:
+          $ref: '#/definitions/keycloak.Group'
+        type: array
+    type: object
+  main.groupPermission:
+    properties:
+      level:
+        type: string
+      subject:
+        $ref: '#/definitions/permissions.Subject'
+    type: object
+  main.groupPermissionsResponse:
+    properties:
+      permissions:
+        items:
+          $ref: '#/definitions/main.groupPermission'
+        type: array
+    type: object
+  main.groupRequest:
+    properties:
+      description:
+        type: string
+      display_extension:
+        type: string
+      name:
+        type: string
+    type: object
+  main.lookupRequest:
+    properties:
+      subject_ids:
+        items:
+          type: string
+        type: array
+    type: object
+  main.memberResult:
+    properties:
+      error:
+        type: string
+      subject_id:
+        type: string
+      success:
+        type: boolean
+    type: object
+  main.membersRequest:
+    properties:
+      members:
+        items:
+          type: string
+        type: array
+    type: object
+  main.membersResponse:
+    properties:
+      members:
+        items:
+          $ref: '#/definitions/keycloak.Subject'
+        type: array
+    type: object
+  main.membersResults:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/main.memberResult'
+        type: array
+    type: object
+  main.permissionRequest:
+    properties:
+      level:
+        type: string
+    type: object
+  main.subjectsResponse:
+    properties:
+      subjects:
+        items:
+          $ref: '#/definitions/keycloak.Subject'
+        type: array
+    type: object
+  permissions.Subject:
+    properties:
+      id:
+        type: string
+      subject_id:
+        type: string
+      subject_source_id:
+        type: string
+      subject_type:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Group management API for the CyVerse Discovery Environment, backed
+    by Keycloak.
+  title: groups
+  version: 0.1.0
+paths:
+  /:
+    get:
+      description: Returns the service name, version, and Keycloak connectivity.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.StatusResponse'
+      summary: Service information
+  /groups:
+    get:
+      parameters:
+      - description: Search term matched against group names
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.groupListResponse'
+      summary: Search groups
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Group to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.groupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/keycloak.Group'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a group
+  /groups/{id}:
+    delete:
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a group
+    get:
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/keycloak.Group'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a group by ID
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated group fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.groupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/keycloak.Group'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a group
+  /groups/{id}/members:
+    get:
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.membersResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List group members
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Usernames to add
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.membersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.membersResults'
+      summary: Add members to a group
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The complete desired membership
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.membersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.membersResults'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Replace all group members
+  /groups/{id}/members/{subject}:
+    delete:
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Username (subject ID)
+        in: path
+        name: subject
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Remove a single member from a group
+    put:
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Username (subject ID)
+        in: path
+        name: subject
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Add a single member to a group
+  /groups/{id}/members/deleter:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Usernames to remove
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.membersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.membersResults'
+      summary: Remove members from a group
+  /groups/{id}/permissions:
+    get:
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The acting user
+        in: query
+        name: user
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.groupPermissionsResponse'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List the permissions granted on a group
+  /groups/{id}/permissions/{subject-type}/{subject-id}:
+    delete:
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Subject type (user or group)
+        in: path
+        name: subject-type
+        required: true
+        type: string
+      - description: Subject identifier
+        in: path
+        name: subject-id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Revoke a subject's permission on a group
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Group UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Subject type (user or group)
+        in: path
+        name: subject-type
+        required: true
+        type: string
+      - description: Subject identifier
+        in: path
+        name: subject-id
+        required: true
+        type: string
+      - description: The permission level to assign
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.permissionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.groupPermission'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Grant a subject a permission level on a group
+  /subjects:
+    get:
+      parameters:
+      - description: Search term matched against users
+        in: query
+        name: search
+        type: string
+      - description: The acting user
+        in: query
+        name: user
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.subjectsResponse'
+      summary: Search subjects
+  /subjects/{subject-id}:
+    get:
+      parameters:
+      - description: Subject identifier (username)
+        in: path
+        name: subject-id
+        required: true
+        type: string
+      - description: The acting user
+        in: query
+        name: user
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/keycloak.Subject'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a subject by ID
+  /subjects/{subject-id}/groups:
+    get:
+      parameters:
+      - description: Subject identifier (username)
+        in: path
+        name: subject-id
+        required: true
+        type: string
+      - description: The acting user
+        in: query
+        name: user
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.groupListResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List the groups a subject belongs to
+  /subjects/lookup:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: The acting user
+        in: query
+        name: user
+        required: true
+        type: string
+      - description: The subject IDs to look up
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.lookupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.subjectsResponse'
+      summary: Look up multiple subjects by ID
+swagger: "2.0"

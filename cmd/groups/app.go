@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 
+	_ "github.com/cyverse-de/groups/docs"
 	"github.com/cyverse-de/groups/eventing"
 	"github.com/cyverse-de/groups/keycloak"
 	"github.com/cyverse-de/groups/permissions"
 	"github.com/knadh/koanf"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	echoSwagger "github.com/swaggo/echo-swagger"
 )
 
 // version is the reported service version.
@@ -25,6 +27,11 @@ type App struct {
 	events      eventing.Publisher
 }
 
+//	@title			groups
+//	@version		0.1.0
+//	@description	Group management API for the CyVerse Discovery Environment, backed by Keycloak.
+//	@BasePath		/
+//
 // NewApp constructs the application, wires up its clients, and registers routes.
 func NewApp(config *koanf.Koanf) (*App, error) {
 	kc, err := keycloakClientFromConfig(config)
@@ -104,6 +111,7 @@ func (a *App) registerRoutes() {
 	a.router.HTTPErrorHandler = a.errorHandler
 
 	a.router.GET("/", a.StatusHandler).Name = "status"
+	a.router.GET("/docs/*", echoSwagger.WrapHandler)
 
 	groups := a.router.Group("/groups")
 	groups.Use(requireUser)

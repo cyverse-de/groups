@@ -141,7 +141,7 @@ func (c *httpClient) do(ctx context.Context, method, path string, query url.Valu
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotFound

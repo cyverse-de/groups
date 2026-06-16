@@ -22,6 +22,9 @@ push:
 test:
     go test ./...
 
+docs:
+    swag init --parseDependency -g app.go -d cmd/groups/ -o docs/
+
 clean:
     #!/usr/bin/env bash
     go clean
