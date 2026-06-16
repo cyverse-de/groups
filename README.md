@@ -55,8 +55,14 @@ Membership:
 - `PUT /groups/:id/members/:subject` — add a single member.
 - `DELETE /groups/:id/members/:subject` — remove a single member.
 
-The `/groups/:id/permissions` endpoints, subject lookups, and AMQP change events
-are added in subsequent milestones; see the implementation plan.
+Permissions:
+
+- `GET /groups/:id/permissions` — list the permissions granted on a group.
+- `PUT /groups/:id/permissions/:subject-type/:subject-id` — grant a subject a level (`{level}`).
+- `DELETE /groups/:id/permissions/:subject-type/:subject-id` — revoke a subject's permission.
+
+Subject lookups and AMQP change events are added in subsequent milestones; see
+the implementation plan.
 
 ## Authorization
 
