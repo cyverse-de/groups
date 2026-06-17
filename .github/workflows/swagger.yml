@@ -1,0 +1,30 @@
+name: swagger-docs
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+# Regenerate the Swagger docs and fail if the committed copy is out of date, so
+# a forgotten `just docs` is caught in review. The swag version is pinned by the
+# tool directive in go.mod.
+#
+# This check is intentionally repo-local for now; it may move into
+# cyverse-de/github-workflows later.
+jobs:
+  swagger-up-to-date:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Regenerate Swagger docs
+        run: go tool swag init --parseDependency -g app.go -d cmd/groups/ -o docs/
+      - name: Fail if docs are out of date
+        run: |
+          if ! git diff --exit-code -- docs/; then
+            echo "::error::Swagger docs are out of date. Run 'just docs' and commit the result."
+            exit 1
+          fi

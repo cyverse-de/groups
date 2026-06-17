@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 WORKDIR /build
 
@@ -13,6 +13,10 @@ COPY . .
 ENV CGO_ENABLED=0
 ENV GOOS=linux
 ENV GOARCH=amd64
+
+# Regenerate the Swagger docs so the image is never built from stale docs. The
+# swag version is pinned by the tool directive in go.mod.
+RUN go tool swag init --parseDependency -g app.go -d cmd/groups/ -o docs/
 
 RUN go build -ldflags="-w -s" --buildvcs=false -o groups ./cmd/groups
 

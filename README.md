@@ -35,6 +35,13 @@ See [`configs/default.yml`](configs/default.yml) for configuration options.
 Environment variables are read with the `GROUPS_` prefix (e.g.
 `GROUPS_KEYCLOAK_CLIENT_SECRET`).
 
+The Swagger docs in `docs/` are generated from the handler annotations and
+checked in so that local builds work without extra steps. Run `just docs` after
+changing an endpoint and commit the result. The container image regenerates them
+at build time, and CI fails if the committed copy is out of date. The swag
+version is pinned by the `tool` directive in `go.mod`, so the Justfile, the
+Dockerfile, and CI all use the same version.
+
 ## Endpoints
 
 - `GET /` — service information and Keycloak connectivity (liveness/readiness probe).
