@@ -856,7 +856,13 @@ const docTemplate = `{
                 "error": {
                     "type": "string"
                 },
+                "source_id": {
+                    "type": "string"
+                },
                 "subject_id": {
+                    "type": "string"
+                },
+                "subject_name": {
                     "type": "string"
                 },
                 "success": {

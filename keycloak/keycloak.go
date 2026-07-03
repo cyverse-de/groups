@@ -58,8 +58,8 @@ type Client interface {
 
 	// Membership. Members are identified by username (subject ID).
 	GroupMembers(ctx context.Context, id string) ([]Subject, error)
-	AddMember(ctx context.Context, groupID, username string) error
-	RemoveMember(ctx context.Context, groupID, username string) error
+	AddMember(ctx context.Context, groupID, username string) (Subject, error)
+	RemoveMember(ctx context.Context, groupID, username string) (Subject, error)
 
 	// Subjects (users).
 	SearchSubjects(ctx context.Context, search string) ([]Subject, error)

@@ -21,8 +21,8 @@ type mockKeycloak struct {
 	updateGroupFn    func(ctx context.Context, id string, spec keycloak.GroupSpec) (*keycloak.Group, error)
 	deleteGroupFn    func(ctx context.Context, id string) error
 	groupMembersFn   func(ctx context.Context, id string) ([]keycloak.Subject, error)
-	addMemberFn      func(ctx context.Context, groupID, username string) error
-	removeMemberFn   func(ctx context.Context, groupID, username string) error
+	addMemberFn      func(ctx context.Context, groupID, username string) (keycloak.Subject, error)
+	removeMemberFn   func(ctx context.Context, groupID, username string) (keycloak.Subject, error)
 	searchSubjectsFn func(ctx context.Context, search string) ([]keycloak.Subject, error)
 	getSubjectFn     func(ctx context.Context, username string) (*keycloak.Subject, error)
 	subjectGroupsFn  func(ctx context.Context, username string) ([]keycloak.Group, error)
@@ -79,18 +79,18 @@ func (m *mockKeycloak) GroupMembers(ctx context.Context, id string) ([]keycloak.
 	return nil, nil
 }
 
-func (m *mockKeycloak) AddMember(ctx context.Context, groupID, username string) error {
+func (m *mockKeycloak) AddMember(ctx context.Context, groupID, username string) (keycloak.Subject, error) {
 	if m.addMemberFn != nil {
 		return m.addMemberFn(ctx, groupID, username)
 	}
-	return nil
+	return keycloak.Subject{}, nil
 }
 
-func (m *mockKeycloak) RemoveMember(ctx context.Context, groupID, username string) error {
+func (m *mockKeycloak) RemoveMember(ctx context.Context, groupID, username string) (keycloak.Subject, error) {
 	if m.removeMemberFn != nil {
 		return m.removeMemberFn(ctx, groupID, username)
 	}
-	return nil
+	return keycloak.Subject{}, nil
 }
 
 func (m *mockKeycloak) SearchSubjects(ctx context.Context, search string) ([]keycloak.Subject, error) {

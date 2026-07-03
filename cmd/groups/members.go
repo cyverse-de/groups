@@ -21,9 +21,11 @@ type membersRequest struct {
 
 // memberResult reports the outcome of a single membership change.
 type memberResult struct {
-	SubjectID string `json:"subject_id"`
-	Success   bool   `json:"success"`
-	Error     string `json:"error,omitempty"`
+	SubjectID   string `json:"subject_id"`
+	Success     bool   `json:"success"`
+	Error       string `json:"error,omitempty"`
+	SourceID    string `json:"source_id,omitempty"`
+	SubjectName string `json:"subject_name,omitempty"`
 }
 
 // membersResults wraps the per-member outcomes of a bulk operation.
@@ -155,7 +157,7 @@ func (a *App) AddMemberHandler(c echo.Context) error {
 	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
 		return err
 	}
-	if err := a.keycloak.AddMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
+	if _, err := a.keycloak.AddMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
 		return keycloakError(err)
 	}
 	a.publishGroupChanged(c, groupID)
@@ -175,15 +177,16 @@ func (a *App) RemoveMemberHandler(c echo.Context) error {
 	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
 		return err
 	}
-	if err := a.keycloak.RemoveMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
+	if _, err := a.keycloak.RemoveMember(c.Request().Context(), groupID, c.Param("subject")); err != nil {
 		return keycloakError(err)
 	}
 	a.publishGroupChanged(c, groupID)
 	return c.NoContent(http.StatusOK)
 }
 
-// membershipFunc is the shared signature of AddMember/RemoveMember.
-type membershipFunc func(ctx context.Context, groupID, username string) error
+// membershipFunc is the shared signature of AddMember/RemoveMember. It returns the
+// resolved subject so callers can report the source ID and name without a second lookup.
+type membershipFunc func(ctx context.Context, groupID, username string) (keycloak.Subject, error)
 
 // bulkMembership applies op to each member in the request body, collecting a
 // per-member result so that one failure does not abort the whole batch.
@@ -208,9 +211,13 @@ func (a *App) bulkMembership(c echo.Context, op membershipFunc) error {
 // runMembership executes a single membership change and converts it to a result.
 func runMembership(ctx context.Context, op membershipFunc, groupID, username string) memberResult {
 	result := memberResult{SubjectID: username, Success: true}
-	if err := op(ctx, groupID, username); err != nil {
+	subject, err := op(ctx, groupID, username)
+	if err != nil {
 		result.Success = false
 		result.Error = err.Error()
+		return result
 	}
+	result.SourceID = subject.SourceID
+	result.SubjectName = subject.Name
 	return result
 }

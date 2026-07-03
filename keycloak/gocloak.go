@@ -206,28 +206,36 @@ func (c *goCloakClient) GroupMembers(ctx context.Context, id string) ([]Subject,
 	return subjects, nil
 }
 
-func (c *goCloakClient) AddMember(ctx context.Context, groupID, username string) error {
+func (c *goCloakClient) AddMember(ctx context.Context, groupID, username string) (Subject, error) {
 	token, err := c.token(ctx)
 	if err != nil {
-		return err
+		return Subject{}, err
 	}
-	userID, err := c.resolveUserID(ctx, token, username)
+	// lookupUserByUsername already fetches the full user, so the resolved subject
+	// (source ID, name, etc.) is returned to the caller without an extra Keycloak call.
+	u, err := c.lookupUserByUsername(ctx, token, username)
 	if err != nil {
-		return err
+		return Subject{}, err
 	}
-	return wrapErr(c.gc.AddUserToGroup(ctx, token, c.cfg.Realm, userID, groupID))
+	if err := c.gc.AddUserToGroup(ctx, token, c.cfg.Realm, gocloak.PString(u.ID), groupID); err != nil {
+		return Subject{}, wrapErr(err)
+	}
+	return toSubject(u), nil
 }
 
-func (c *goCloakClient) RemoveMember(ctx context.Context, groupID, username string) error {
+func (c *goCloakClient) RemoveMember(ctx context.Context, groupID, username string) (Subject, error) {
 	token, err := c.token(ctx)
 	if err != nil {
-		return err
+		return Subject{}, err
 	}
-	userID, err := c.resolveUserID(ctx, token, username)
+	u, err := c.lookupUserByUsername(ctx, token, username)
 	if err != nil {
-		return err
+		return Subject{}, err
 	}
-	return wrapErr(c.gc.DeleteUserFromGroup(ctx, token, c.cfg.Realm, userID, groupID))
+	if err := c.gc.DeleteUserFromGroup(ctx, token, c.cfg.Realm, gocloak.PString(u.ID), groupID); err != nil {
+		return Subject{}, wrapErr(err)
+	}
+	return toSubject(u), nil
 }
 
 // --- subjects ---

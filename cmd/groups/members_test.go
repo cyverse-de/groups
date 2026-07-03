@@ -32,11 +32,11 @@ func TestGetMembers(t *testing.T) {
 
 func TestAddMembersBulkCollectsResults(t *testing.T) {
 	app := newTestApp(&mockKeycloak{
-		addMemberFn: func(_ context.Context, _ string, username string) error {
+		addMemberFn: func(_ context.Context, _ string, username string) (keycloak.Subject, error) {
 			if username == "bad" {
-				return errors.New("nope")
+				return keycloak.Subject{}, errors.New("nope")
 			}
-			return nil
+			return keycloak.Subject{ID: username, Name: username, SourceID: "ldap"}, nil
 		},
 	})
 
@@ -53,9 +53,12 @@ func TestAddMembersBulkCollectsResults(t *testing.T) {
 		byID[r.SubjectID] = r
 	}
 	assert.True(t, byID["alice"].Success)
+	assert.Equal(t, "ldap", byID["alice"].SourceID)
+	assert.Equal(t, "alice", byID["alice"].SubjectName)
 	assert.False(t, byID["bad"].Success)
 	assert.Equal(t, "nope", byID["bad"].Error)
 	assert.True(t, byID["carol"].Success)
+	assert.Equal(t, "ldap", byID["carol"].SourceID)
 }
 
 func TestReplaceMembersReconciles(t *testing.T) {
@@ -68,17 +71,17 @@ func TestReplaceMembersReconciles(t *testing.T) {
 		groupMembersFn: func(_ context.Context, _ string) ([]keycloak.Subject, error) {
 			return []keycloak.Subject{{ID: "alice"}, {ID: "bob"}}, nil
 		},
-		addMemberFn: func(_ context.Context, _ string, username string) error {
+		addMemberFn: func(_ context.Context, _ string, username string) (keycloak.Subject, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			added = append(added, username)
-			return nil
+			return keycloak.Subject{ID: username}, nil
 		},
-		removeMemberFn: func(_ context.Context, _ string, username string) error {
+		removeMemberFn: func(_ context.Context, _ string, username string) (keycloak.Subject, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			removed = append(removed, username)
-			return nil
+			return keycloak.Subject{ID: username}, nil
 		},
 	})
 
@@ -95,10 +98,10 @@ func TestReplaceMembersReconciles(t *testing.T) {
 
 func TestRemoveSingleMember(t *testing.T) {
 	app := newTestApp(&mockKeycloak{
-		removeMemberFn: func(_ context.Context, groupID, username string) error {
+		removeMemberFn: func(_ context.Context, groupID, username string) (keycloak.Subject, error) {
 			assert.Equal(t, "g1", groupID)
 			assert.Equal(t, "alice", username)
-			return nil
+			return keycloak.Subject{ID: username}, nil
 		},
 	})
 
