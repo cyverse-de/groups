@@ -9,6 +9,7 @@ require (
 	github.com/cyverse-de/messaging/v12 v12.0.2
 	github.com/knadh/koanf v1.5.0
 	github.com/labstack/echo/v4 v4.15.4
+	github.com/lib/pq v1.10.9
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/echo-swagger v1.5.2

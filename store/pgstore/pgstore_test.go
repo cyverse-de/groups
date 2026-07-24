@@ -1,0 +1,486 @@
+package pgstore
+
+import (
+	"context"
+	"errors"
+	"os"
+	"testing"
+
+	"github.com/cyverse-de/groups/model"
+	"github.com/cyverse-de/groups/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// These tests need a PostgreSQL database with the DE schema applied. Set
+// GROUPS_TEST_DB_URI to run them, e.g.
+//
+//	GROUPS_TEST_DB_URI=postgres://postgres:test@localhost:5433/de?sslmode=disable go test ./store/pgstore/
+func testStore(t *testing.T) *Store {
+	t.Helper()
+
+	uri := os.Getenv("GROUPS_TEST_DB_URI")
+	if uri == "" {
+		t.Skip("GROUPS_TEST_DB_URI is not set")
+	}
+
+	s, err := Open(t.Context(), Config{URI: uri})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, s.Close()) })
+
+	// Group data is rebuilt per test. Deleting the group subjects cascades to
+	// groups, membership, and the closure.
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM subjects WHERE subject_type = 'group'`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(),
+		`DELETE FROM subjects WHERE subject_type = 'user' AND subject_id LIKE 'test-%'`)
+	require.NoError(t, err)
+
+	return s
+}
+
+// mustCreate creates a group and returns it, failing the test on error.
+func mustCreate(t *testing.T, s *Store, spec model.GroupSpec) *model.Group {
+	t.Helper()
+	var g *model.Group
+	require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+		var err error
+		g, err = tx.CreateGroup(t.Context(), spec)
+		return err
+	}))
+	return g
+}
+
+// mustAddMembers adds members and returns the per-member outcomes.
+func mustAddMembers(t *testing.T, s *Store, groupID string, ids ...string) []model.MemberChange {
+	t.Helper()
+	var changes []model.MemberChange
+	require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+		var err error
+		changes, err = tx.AddMembers(t.Context(), groupID, ids, "test-actor")
+		return err
+	}))
+	return changes
+}
+
+func collabList(owner, name string) model.GroupSpec {
+	return model.GroupSpec{GroupType: model.GroupTypeCollaboratorList, Owner: owner, Name: name}
+}
+
+func TestCreateGroup(t *testing.T) {
+	s := testStore(t)
+
+	t.Run("assigns a Grouper-shaped identifier", func(t *testing.T) {
+		g := mustCreate(t, s, collabList("test-alice", "default"))
+		assert.Regexp(t, `^[0-9a-f]{32}$`, g.ID,
+			"new group ids must match the imported Grouper format")
+		assert.Equal(t, "test-alice", g.Owner)
+		assert.Equal(t, "default", g.Name)
+		assert.False(t, g.CreatedAt.IsZero())
+	})
+
+	t.Run("rejects a duplicate identity regardless of case and spacing", func(t *testing.T) {
+		mustCreate(t, s, collabList("test-bob", "shared"))
+		err := s.WithTx(t.Context(), func(tx store.Tx) error {
+			_, err := tx.CreateGroup(t.Context(), collabList("TEST-BOB", "  Shared "))
+			return err
+		})
+		assert.ErrorIs(t, err, store.ErrConflict)
+	})
+
+	t.Run("enforces owner against group type", func(t *testing.T) {
+		cases := []struct {
+			name string
+			spec model.GroupSpec
+		}{
+			{"community with an owner", model.GroupSpec{
+				GroupType: model.GroupTypeCommunity, Owner: "test-alice", Name: "owned"}},
+			{"team without an owner", model.GroupSpec{
+				GroupType: model.GroupTypeTeam, Name: "ownerless"}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				err := s.WithTx(t.Context(), func(tx store.Tx) error {
+					_, err := tx.CreateGroup(t.Context(), tc.spec)
+					return err
+				})
+				assert.ErrorIs(t, err, store.ErrOwnerRequired)
+			})
+		}
+	})
+
+	t.Run("rolls back when the transaction returns an error", func(t *testing.T) {
+		sentinel := errors.New("caller changed its mind")
+		err := s.WithTx(t.Context(), func(tx store.Tx) error {
+			if _, err := tx.CreateGroup(t.Context(), collabList("test-carol", "rollback")); err != nil {
+				return err
+			}
+			return sentinel
+		})
+		require.ErrorIs(t, err, sentinel)
+
+		_, err = s.LookupGroup(t.Context(),
+			model.Ref{GroupType: model.GroupTypeCollaboratorList, Owner: "test-carol", Name: "rollback"})
+		assert.ErrorIs(t, err, store.ErrNotFound, "the group must not survive a rolled-back transaction")
+	})
+}
+
+func TestLookupAndGet(t *testing.T) {
+	s := testStore(t)
+	created := mustCreate(t, s, collabList("test-alice", "My List"))
+
+	t.Run("by id", func(t *testing.T) {
+		g, err := s.GetGroup(t.Context(), created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, created.ID, g.ID)
+	})
+
+	t.Run("by identity, case- and space-insensitively", func(t *testing.T) {
+		g, err := s.LookupGroup(t.Context(), model.Ref{
+			GroupType: model.GroupTypeCollaboratorList, Owner: "TEST-ALICE", Name: "my  list"})
+		require.NoError(t, err)
+		assert.Equal(t, created.ID, g.ID)
+	})
+
+	t.Run("missing group reports not found", func(t *testing.T) {
+		_, err := s.GetGroup(t.Context(), "ffffffffffffffffffffffffffffffff")
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+}
+
+func TestUpdateAndDelete(t *testing.T) {
+	s := testStore(t)
+
+	t.Run("updates only the fields supplied", func(t *testing.T) {
+		g := mustCreate(t, s, model.GroupSpec{
+			GroupType: model.GroupTypeCommunity, Name: "NEON", Description: "original"})
+
+		newName := "NEON Updated"
+		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+			updated, err := tx.UpdateGroup(t.Context(), g.ID, model.GroupUpdate{Name: &newName})
+			if err != nil {
+				return err
+			}
+			assert.Equal(t, "NEON Updated", updated.Name)
+			assert.Equal(t, "original", updated.Description, "description must be left alone")
+			return nil
+		}))
+	})
+
+	t.Run("delete removes the group and reports a second delete", func(t *testing.T) {
+		g := mustCreate(t, s, collabList("test-dave", "doomed"))
+		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+			return tx.DeleteGroup(t.Context(), g.ID)
+		}))
+
+		_, err := s.GetGroup(t.Context(), g.ID)
+		assert.ErrorIs(t, err, store.ErrNotFound)
+
+		err = s.WithTx(t.Context(), func(tx store.Tx) error {
+			return tx.DeleteGroup(t.Context(), g.ID)
+		})
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+}
+
+func TestListGroups(t *testing.T) {
+	s := testStore(t)
+	list := mustCreate(t, s, collabList("test-alice", "default"))
+	mustCreate(t, s, model.GroupSpec{GroupType: model.GroupTypeTeam, Owner: "test-bob", Name: "Ecology"})
+	mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeCommunity, Name: "NEON", Description: "sensor network"})
+	mustAddMembers(t, s, list.ID, "test-zed")
+
+	cases := []struct {
+		name   string
+		filter store.ListFilter
+		want   []string
+	}{
+		{"everything", store.ListFilter{}, []string{"default", "NEON", "Ecology"}},
+		{"by type", store.ListFilter{GroupType: model.GroupTypeTeam}, []string{"Ecology"}},
+		{"by owner", store.ListFilter{Owner: "test-alice"}, []string{"default"}},
+		{"by name search", store.ListFilter{Search: "eco"}, []string{"Ecology"}},
+		{"search matches description", store.ListFilter{Search: "sensor"}, []string{"NEON"}},
+		{"by member", store.ListFilter{Member: "test-zed"}, []string{"default"}},
+		{"limit", store.ListFilter{Limit: 1}, []string{"default"}},
+		{"no match", store.ListFilter{Search: "nonexistent"}, []string{}},
+		{"wildcards are matched literally", store.ListFilter{Search: "%"}, []string{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			groups, err := s.ListGroups(t.Context(), tc.filter)
+			require.NoError(t, err)
+
+			names := make([]string, 0, len(groups))
+			for _, g := range groups {
+				names = append(names, g.Name)
+			}
+			assert.ElementsMatch(t, tc.want, names)
+		})
+	}
+}
+
+func TestMembership(t *testing.T) {
+	s := testStore(t)
+	list := mustCreate(t, s, collabList("test-alice", "default"))
+
+	t.Run("adds users and creates their subject rows", func(t *testing.T) {
+		changes := mustAddMembers(t, s, list.ID, "test-bob", "test-carol")
+		require.Len(t, changes, 2)
+		for _, c := range changes {
+			assert.NoError(t, c.Err)
+			assert.Equal(t, model.MemberTypeUser, c.Type)
+		}
+
+		members, err := s.ListMembers(t.Context(), list.ID)
+		require.NoError(t, err)
+		assert.Len(t, members, 2)
+	})
+
+	t.Run("adding an existing member is idempotent", func(t *testing.T) {
+		mustAddMembers(t, s, list.ID, "test-bob")
+		members, err := s.ListMembers(t.Context(), list.ID)
+		require.NoError(t, err)
+		assert.Len(t, members, 2, "re-adding a member must not duplicate it")
+	})
+
+	t.Run("removing a non-member succeeds", func(t *testing.T) {
+		var changes []model.MemberChange
+		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+			var err error
+			changes, err = tx.RemoveMembers(t.Context(), list.ID, []string{"test-nobody"})
+			return err
+		}))
+		assert.Len(t, changes, 1)
+		assert.NoError(t, changes[0].Err)
+	})
+
+	t.Run("membership of a missing group reports not found", func(t *testing.T) {
+		err := s.WithTx(t.Context(), func(tx store.Tx) error {
+			_, err := tx.AddMembers(t.Context(), "ffffffffffffffffffffffffffffffff",
+				[]string{"test-bob"}, "test-actor")
+			return err
+		})
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+
+	t.Run("replace reports only the differences", func(t *testing.T) {
+		group := mustCreate(t, s, collabList("test-erin", "default"))
+		mustAddMembers(t, s, group.ID, "test-bob", "test-carol")
+
+		var changes []model.MemberChange
+		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+			var err error
+			changes, err = tx.ReplaceMembers(t.Context(), group.ID,
+				[]string{"test-carol", "test-dan"}, "test-actor")
+			return err
+		}))
+
+		ids := make([]string, 0, len(changes))
+		for _, c := range changes {
+			ids = append(ids, c.SubjectID)
+		}
+		assert.ElementsMatch(t, []string{"test-bob", "test-dan"}, ids,
+			"carol was already a member and must not be reported")
+	})
+}
+
+func TestNesting(t *testing.T) {
+	s := testStore(t)
+	list := mustCreate(t, s, collabList("test-alice", "default"))
+	team := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-bob", Name: "Ecology"})
+
+	mustAddMembers(t, s, team.ID, "test-carol", "test-dan")
+	changes := mustAddMembers(t, s, list.ID, team.ID)
+	require.Len(t, changes, 1)
+	require.NoError(t, changes[0].Err)
+	assert.Equal(t, model.MemberTypeGroup, changes[0].Type)
+
+	t.Run("effective membership resolves through the nested group", func(t *testing.T) {
+		for _, user := range []string{"test-carol", "test-dan"} {
+			member, err := s.IsEffectiveMember(t.Context(), list.ID, user)
+			require.NoError(t, err)
+			assert.True(t, member, "%s should reach the list through the nested team", user)
+		}
+	})
+
+	t.Run("direct membership still reports the group, not its users", func(t *testing.T) {
+		members, err := s.ListMembers(t.Context(), list.ID)
+		require.NoError(t, err)
+		require.Len(t, members, 1)
+		assert.Equal(t, team.ID, members[0].ID)
+		assert.Equal(t, model.MemberTypeGroup, members[0].Type)
+	})
+
+	t.Run("adding to the nested group propagates to the container", func(t *testing.T) {
+		mustAddMembers(t, s, team.ID, "test-frank")
+		member, err := s.IsEffectiveMember(t.Context(), list.ID, "test-frank")
+		require.NoError(t, err)
+		assert.True(t, member, "a new team member must reach the containing list")
+	})
+
+	t.Run("removing from the nested group propagates to the container", func(t *testing.T) {
+		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+			_, err := tx.RemoveMembers(t.Context(), team.ID, []string{"test-dan"})
+			return err
+		}))
+		member, err := s.IsEffectiveMember(t.Context(), list.ID, "test-dan")
+		require.NoError(t, err)
+		assert.False(t, member, "a removed team member must lose access through the list")
+	})
+
+	t.Run("GroupsForSubject reports containers reached through nesting", func(t *testing.T) {
+		groups, err := s.GroupsForSubject(t.Context(), "test-carol", "")
+		require.NoError(t, err)
+
+		ids := make([]string, 0, len(groups))
+		for _, g := range groups {
+			ids = append(ids, g.ID)
+		}
+		assert.ElementsMatch(t, []string{team.ID, list.ID}, ids)
+
+		filtered, err := s.GroupsForSubject(t.Context(), "test-carol", model.GroupTypeTeam)
+		require.NoError(t, err)
+		require.Len(t, filtered, 1)
+		assert.Equal(t, team.ID, filtered[0].ID)
+	})
+
+	t.Run("deleting the nested group revokes inherited membership", func(t *testing.T) {
+		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+			return tx.DeleteGroup(t.Context(), team.ID)
+		}))
+
+		member, err := s.IsEffectiveMember(t.Context(), list.ID, "test-carol")
+		require.NoError(t, err)
+		assert.False(t, member,
+			"deleting a nested group must not leave its members with inherited access")
+	})
+}
+
+func TestCycleRejection(t *testing.T) {
+	s := testStore(t)
+	outer := mustCreate(t, s, model.GroupSpec{GroupType: model.GroupTypeCommunity, Name: "Outer"})
+	inner := mustCreate(t, s, model.GroupSpec{GroupType: model.GroupTypeCommunity, Name: "Inner"})
+
+	require.NoError(t, mustAddMembers(t, s, outer.ID, inner.ID)[0].Err)
+
+	cases := []struct {
+		name          string
+		group, member string
+	}{
+		{"direct cycle", inner.ID, outer.ID},
+		{"self membership", outer.ID, outer.ID},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			changes := mustAddMembers(t, s, tc.group, tc.member)
+			require.Len(t, changes, 1)
+			assert.ErrorIs(t, changes[0].Err, store.ErrCycle)
+		})
+	}
+
+	t.Run("a rejected member does not abort the rest of the batch", func(t *testing.T) {
+		changes := mustAddMembers(t, s, inner.ID, outer.ID, "test-grace")
+		require.Len(t, changes, 2)
+		assert.ErrorIs(t, changes[0].Err, store.ErrCycle)
+		assert.NoError(t, changes[1].Err)
+
+		member, err := s.IsEffectiveMember(t.Context(), inner.ID, "test-grace")
+		require.NoError(t, err)
+		assert.True(t, member)
+	})
+}
+
+func TestGrouperAllIsNotAGroup(t *testing.T) {
+	s := testStore(t)
+	list := mustCreate(t, s, collabList("test-alice", "default"))
+
+	// GrouperAll is a group-typed subject with no group row: the sentinel that
+	// marks a group public. It must not be usable as a member.
+	_, err := s.db.ExecContext(t.Context(),
+		`INSERT INTO subjects (subject_id, subject_type) VALUES ('GrouperAll', 'group')
+		 ON CONFLICT (subject_id) DO NOTHING`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := s.db.ExecContext(context.Background(),
+			`DELETE FROM subjects WHERE subject_id = 'GrouperAll'`)
+		assert.NoError(t, err)
+	})
+
+	changes := mustAddMembers(t, s, list.ID, "GrouperAll")
+	require.Len(t, changes, 1)
+	require.Error(t, changes[0].Err)
+	assert.Contains(t, changes[0].Err.Error(), "not a group that can hold members")
+}
+
+func TestDSNWithSearchPath(t *testing.T) {
+	cases := []struct {
+		name, uri, schema, want string
+	}{
+		{
+			name:   "adds search_path when absent",
+			uri:    "postgres://de@dedb:5432/de?sslmode=disable",
+			schema: "permissions",
+			want:   "postgres://de@dedb:5432/de?search_path=permissions%2Cpublic&sslmode=disable",
+		},
+		{
+			name:   "leaves an explicit search_path alone",
+			uri:    "postgres://de@dedb:5432/de?search_path=custom",
+			schema: "permissions",
+			want:   "postgres://de@dedb:5432/de?search_path=custom",
+		},
+		{
+			name:   "passes keyword/value connection strings through",
+			uri:    "host=dedb user=de dbname=de",
+			schema: "permissions",
+			want:   "host=dedb user=de dbname=de",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := dsnWithSearchPath(tc.uri, tc.schema)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// Guards the assumption the closure depends on: the trigger repairs containers
+// on delete, so a from-scratch recomputation must always agree with the stored
+// table. This is the same check the reconciliation job runs.
+func TestClosureMatchesRecomputation(t *testing.T) {
+	s := testStore(t)
+	list := mustCreate(t, s, collabList("test-alice", "default"))
+	team := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-bob", Name: "Ecology"})
+
+	mustAddMembers(t, s, team.ID, "test-carol")
+	mustAddMembers(t, s, list.ID, team.ID, "test-alice")
+	require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+		return tx.DeleteGroup(t.Context(), team.ID)
+	}))
+
+	var missing, stale int
+	err := s.db.QueryRowContext(t.Context(), `
+		WITH RECURSIVE reachable(root, member_id, member_type) AS (
+			SELECT gm.group_id, gm.member_id, gm.member_type FROM group_memberships gm
+			UNION
+			SELECT r.root, gm.member_id, gm.member_type
+			  FROM reachable r JOIN group_memberships gm ON gm.group_id = r.member_id
+			 WHERE r.member_type = 'group'
+		),
+		expected AS (SELECT DISTINCT root AS group_id, member_id FROM reachable WHERE member_type = 'user')
+		SELECT
+			(SELECT count(*) FROM (SELECT group_id, member_id FROM expected
+			 EXCEPT SELECT group_id, member_id FROM group_effective_members) d),
+			(SELECT count(*) FROM (SELECT group_id, member_id FROM group_effective_members
+			 EXCEPT SELECT group_id, member_id FROM expected) d)`).Scan(&missing, &stale)
+	require.NoError(t, err)
+
+	assert.Zero(t, missing, "the closure is missing rows the membership graph implies")
+	assert.Zero(t, stale, "the closure grants membership the graph no longer justifies")
+}

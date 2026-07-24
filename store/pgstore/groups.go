@@ -1,0 +1,188 @@
+package pgstore
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/cyverse-de/groups/model"
+	"github.com/cyverse-de/groups/store"
+)
+
+// GetGroup looks a group up by its external identifier.
+func (r *reader) GetGroup(ctx context.Context, id string) (*model.Group, error) {
+	query := `SELECT ` + groupColumns + `
+		FROM groups g
+		JOIN subjects s ON s.id = g.subject_id
+		WHERE s.subject_id = $1`
+	return scanGroup(r.q.QueryRowContext(ctx, query, id))
+}
+
+// LookupGroup looks a group up by its structured identity. The predicates mirror
+// the groups_identity_unique index expression term for term so the index is
+// used and so lookup agrees with what uniqueness allows.
+func (r *reader) LookupGroup(ctx context.Context, ref model.Ref) (*model.Group, error) {
+	query := `SELECT ` + groupColumns + `
+		FROM groups g
+		JOIN subjects s ON s.id = g.subject_id
+		WHERE g.group_type = $1
+		  AND lower(coalesce(g.owner, '')) = lower($2)
+		  AND lower(trim(regexp_replace(g.name, '[[:space:]]+', ' ', 'g')))
+		    = lower(trim(regexp_replace($3, '[[:space:]]+', ' ', 'g')))`
+	return scanGroup(r.q.QueryRowContext(ctx, query, ref.GroupType, ref.Owner, ref.Name))
+}
+
+// ListGroups returns the groups matching the filter. A member filter restricts
+// the results to groups the user belongs to through any depth of nesting.
+func (r *reader) ListGroups(ctx context.Context, f store.ListFilter) ([]model.Group, error) {
+	var (
+		joins  strings.Builder
+		where  []string
+		args   []any
+		nextID = func(v any) string {
+			args = append(args, v)
+			return fmt.Sprintf("$%d", len(args))
+		}
+	)
+
+	if f.Member != "" {
+		joins.WriteString(`
+		JOIN group_effective_members em ON em.group_id = g.subject_id
+		JOIN subjects ms ON ms.id = em.member_id AND ms.subject_id = ` + nextID(f.Member))
+	}
+	if f.GroupType != "" {
+		where = append(where, "g.group_type = "+nextID(f.GroupType))
+	}
+	if f.Owner != "" {
+		where = append(where, "g.owner = "+nextID(f.Owner))
+	}
+	if f.Search != "" {
+		p := nextID("%" + escapeLike(f.Search) + "%")
+		where = append(where, `(g.name ILIKE `+p+` ESCAPE '\' OR g.description ILIKE `+p+` ESCAPE '\')`)
+	}
+
+	query := `SELECT ` + groupColumns + `
+		FROM groups g
+		JOIN subjects s ON s.id = g.subject_id` + joins.String()
+	if len(where) > 0 {
+		query += "\n\t\tWHERE " + strings.Join(where, "\n\t\t  AND ")
+	}
+	query += "\n\t\tORDER BY g.group_type, g.owner NULLS FIRST, g.name"
+
+	if f.Limit > 0 {
+		query += " LIMIT " + nextID(f.Limit)
+	}
+	if f.Offset > 0 {
+		query += " OFFSET " + nextID(f.Offset)
+	}
+
+	rows, err := r.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, translateErr(err)
+	}
+	return scanGroups(rows)
+}
+
+// GroupsForSubject returns the groups a user belongs to, through any depth of
+// nesting. Effective rather than direct membership, matching what Grouper
+// reported and what permission lookup expands.
+func (r *reader) GroupsForSubject(ctx context.Context, username, groupType string) ([]model.Group, error) {
+	query := `SELECT ` + groupColumns + `
+		FROM group_effective_members em
+		JOIN subjects ms ON ms.id = em.member_id
+		JOIN groups g    ON g.subject_id = em.group_id
+		JOIN subjects s  ON s.id = g.subject_id
+		WHERE ms.subject_id = $1
+		  AND ($2 = '' OR g.group_type = $2)
+		ORDER BY g.group_type, g.owner NULLS FIRST, g.name`
+
+	rows, err := r.q.QueryContext(ctx, query, username, groupType)
+	if err != nil {
+		return nil, translateErr(err)
+	}
+	return scanGroups(rows)
+}
+
+// CreateGroup inserts the group's subject row and the group itself. The subject
+// identifier is left to the column default, which mints the 32-hex form that
+// imported Grouper identifiers use.
+func (t *tx) CreateGroup(ctx context.Context, spec model.GroupSpec) (*model.Group, error) {
+	var internalID, externalID string
+	err := t.tx.QueryRowContext(ctx,
+		`INSERT INTO subjects (subject_type) VALUES ('group') RETURNING id, subject_id`,
+	).Scan(&internalID, &externalID)
+	if err != nil {
+		return nil, translateErr(err)
+	}
+
+	_, err = t.tx.ExecContext(ctx,
+		`INSERT INTO groups (subject_id, group_type, owner, name, display_name, description)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		internalID, spec.GroupType, nullString(spec.Owner), spec.Name,
+		nullString(spec.DisplayName), spec.Description)
+	if err != nil {
+		return nil, translateErr(err)
+	}
+
+	return t.GetGroup(ctx, externalID)
+}
+
+// UpdateGroup changes a group's name, display name, and description. Group type
+// and owner are immutable: the owner is the namespace segment the group's
+// identity is built from, not a transferable ownership record.
+func (t *tx) UpdateGroup(ctx context.Context, id string, upd model.GroupUpdate) (*model.Group, error) {
+	var (
+		sets []string
+		args = []any{id}
+		next = func(v any) string {
+			args = append(args, v)
+			return fmt.Sprintf("$%d", len(args))
+		}
+	)
+
+	if upd.Name != nil {
+		sets = append(sets, "name = "+next(*upd.Name))
+	}
+	if upd.DisplayName != nil {
+		sets = append(sets, "display_name = "+next(nullString(*upd.DisplayName)))
+	}
+	if upd.Description != nil {
+		sets = append(sets, "description = "+next(*upd.Description))
+	}
+	if len(sets) == 0 {
+		return t.GetGroup(ctx, id)
+	}
+
+	res, err := t.tx.ExecContext(ctx,
+		`UPDATE groups SET `+strings.Join(sets, ", ")+`
+		 WHERE subject_id = (SELECT id FROM subjects WHERE subject_id = $1 AND subject_type = 'group')`,
+		args...)
+	if err != nil {
+		return nil, translateErr(err)
+	}
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		return nil, store.ErrNotFound
+	}
+
+	return t.GetGroup(ctx, id)
+}
+
+// DeleteGroup removes the group by deleting its subject row, which cascades to
+// the group, its membership, and any permission granted to it. The BEFORE DELETE
+// trigger on groups detaches it from any group containing it and repairs their
+// effective membership first.
+func (t *tx) DeleteGroup(ctx context.Context, id string) error {
+	res, err := t.tx.ExecContext(ctx,
+		`DELETE FROM subjects WHERE subject_id = $1 AND subject_type = 'group'`, id)
+	if err != nil {
+		return translateErr(err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return translateErr(err)
+	}
+	if affected == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
