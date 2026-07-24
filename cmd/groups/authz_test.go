@@ -144,3 +144,60 @@ func TestDeleteGroupRemovesPermissionsResource(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, resourceDeleted)
 }
+
+func TestAdminUserBypassesMemberAuthz(t *testing.T) {
+	kc := &mockKeycloak{
+		groupMembersFn: func(_ context.Context, id string) ([]keycloak.Subject, error) {
+			assert.Equal(t, "g1", id)
+			return []keycloak.Subject{{ID: "alice"}}, nil
+		},
+	}
+	// Deny every permission check; only the admin bypass can let the request through.
+	perms := &mockPermissions{
+		checkFn: func(_ context.Context, _, _, _, _, _ string, _ bool) (bool, error) {
+			return false, nil
+		},
+	}
+	app := newTestAppWith(kc, perms)
+	app.adminUsers = map[string]struct{}{"permissions-svc": {}}
+
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "permissions-svc")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestAdminUserBypassesLevelAuthz(t *testing.T) {
+	kc := &mockKeycloak{
+		updateGroupFn: func(_ context.Context, id string, spec keycloak.GroupSpec) (*keycloak.Group, error) {
+			return &keycloak.Group{ID: id, Name: spec.Name}, nil
+		},
+	}
+	perms := &mockPermissions{
+		checkFn: func(_ context.Context, _, _, _, _, _ string, _ bool) (bool, error) {
+			return false, nil
+		},
+	}
+	app := newTestAppWith(kc, perms)
+	app.adminUsers = map[string]struct{}{"permissions-svc": {}}
+
+	rec := doRequestAs(app, http.MethodPut, "/groups/g1", `{"name":"team-a"}`, "permissions-svc")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestNonAdminUserStillForbidden(t *testing.T) {
+	kc := &mockKeycloak{
+		groupMembersFn: func(_ context.Context, _ string) ([]keycloak.Subject, error) {
+			return []keycloak.Subject{{ID: "alice"}}, nil
+		},
+	}
+	perms := &mockPermissions{
+		checkFn: func(_ context.Context, _, _, _, _, _ string, _ bool) (bool, error) {
+			return false, nil
+		},
+	}
+	app := newTestAppWith(kc, perms)
+	app.adminUsers = map[string]struct{}{"permissions-svc": {}}
+
+	// "mallory" is not an admin and not a member (members list is only alice) -> 403.
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "mallory")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}

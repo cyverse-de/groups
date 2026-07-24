@@ -25,6 +25,7 @@ type App struct {
 	keycloak    keycloak.Client
 	permissions permissions.Client
 	events      eventing.Publisher
+	adminUsers  map[string]struct{}
 }
 
 //	@title			groups
@@ -50,6 +51,7 @@ func NewApp(config *koanf.Koanf) (*App, error) {
 		keycloak:    kc,
 		permissions: permissions.NewClient(permissionsBaseURL(config)),
 		events:      events,
+		adminUsers:  adminUsersFromConfig(config),
 	}
 
 	app.ensureResourceType()
@@ -91,6 +93,17 @@ func permissionsBaseURL(config *koanf.Koanf) string {
 		return base
 	}
 	return "http://permissions"
+}
+
+// adminUsersFromConfig builds the set of trusted service accounts (admin.users)
+// that bypass per-group permission checks.
+func adminUsersFromConfig(config *koanf.Koanf) map[string]struct{} {
+	users := config.Strings("admin.users")
+	admins := make(map[string]struct{}, len(users))
+	for _, user := range users {
+		admins[user] = struct{}{}
+	}
+	return admins
 }
 
 // ensureResourceType registers the "group" resource type with the permissions

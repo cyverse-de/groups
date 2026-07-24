@@ -35,9 +35,19 @@ func actingUser(c echo.Context) string {
 	return user
 }
 
+// isAdminUser reports whether the acting user is a configured administrative
+// service account (admin.users) that bypasses per-group permission checks.
+func (a *App) isAdminUser(user string) bool {
+	_, ok := a.adminUsers[user]
+	return ok
+}
+
 // requireLevel ensures the acting user holds at least minLevel on the group,
 // returning a 403 error otherwise.
 func (a *App) requireLevel(c echo.Context, groupID, minLevel string) error {
+	if a.isAdminUser(actingUser(c)) {
+		return nil
+	}
 	ok, err := a.permissions.Check(c.Request().Context(), permissions.SubjectTypeUser,
 		actingUser(c), resourceTypeGroup, groupID, minLevel, true)
 	if err != nil {
@@ -54,6 +64,10 @@ func (a *App) requireLevel(c echo.Context, groupID, minLevel string) error {
 func (a *App) requireReadOrMember(c echo.Context, groupID string) error {
 	ctx := c.Request().Context()
 	user := actingUser(c)
+
+	if a.isAdminUser(user) {
+		return nil
+	}
 
 	ok, err := a.permissions.Check(ctx, permissions.SubjectTypeUser, user,
 		resourceTypeGroup, groupID, permissions.LevelRead, true)

@@ -23,3 +23,9 @@ permissions:
 amqp:
   uri: amqp://guest:guest@rabbit:5672/
   exchange: de
+
+# Trusted service accounts that bypass per-group permission checks. Intended
+# for internal DE services (e.g. the permissions service) that must be able to
+# read any group's membership. Leave empty to disable the bypass entirely.
+admin:
+  users: []

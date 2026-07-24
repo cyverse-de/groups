@@ -104,3 +104,9 @@ Group-management rights are stored in the permissions service as grants on the
 
 The creator of a group is granted `own` automatically; if that grant fails the
 group is rolled back. Deleting a group also removes its permissions resource.
+
+Trusted service accounts may be configured to bypass these per-group checks:
+
+- `admin.users` — list of trusted service account usernames that bypass
+  per-group permission checks (for example, the DE permissions service).
+  Default: empty.
