@@ -107,6 +107,8 @@ group is rolled back. Deleting a group also removes its permissions resource.
 
 Trusted service accounts may be configured to bypass these per-group checks:
 
-- `admin.users` — list of trusted service account usernames that bypass
-  per-group permission checks (for example, the DE permissions service).
-  Default: empty.
+- `admin.users` — list of service account usernames that bypass ALL per-group
+  permission checks, granting full administrative control over every group:
+  reading and modifying membership, updating or deleting any group, and managing
+  group permissions. List only fully trusted internal DE services (for example,
+  the DE permissions service). Default: empty.
