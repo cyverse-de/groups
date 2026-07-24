@@ -3,17 +3,23 @@
 # Values may also be supplied via environment variables prefixed with GROUPS_
 # (e.g. GROUPS_KEYCLOAK_CLIENT_SECRET) or a dotenv file.
 
+# Group storage. Groups, membership, and their effective-membership closure live
+# in the permissions schema of the DE database, alongside the tables the
+# permissions service owns. The schema is applied as a connection-level
+# search_path, so it does not need to be set in the URI.
+db:
+  uri: postgresql://de:notprod@dedb:5432/de?sslmode=disable
+  schema: permissions
+
 # Keycloak connection settings. The service authenticates as a confidential
-# client using the client-credentials grant; the client's service account must
-# have the realm-management roles needed to manage groups, members, and users.
+# client using the client-credentials grant. Keycloak is only the source of user
+# attributes -- names, email addresses, and institutions -- so the service
+# account needs permission to read users, not to manage groups.
 keycloak:
   base-url: https://keycloak.example.org/auth
   realm: example
   client-id: groups-service
   client-secret: changeme
-  # Optional parent group under which all managed groups are created. Leave
-  # empty to create groups at the top level of the realm.
-  parent-group: ""
 
 # Base URL of the DE permissions service used for group authorization.
 permissions:

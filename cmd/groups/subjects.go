@@ -4,13 +4,14 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/model"
+	"github.com/cyverse-de/groups/userinfo"
 	"github.com/labstack/echo/v4"
 )
 
 // subjectsResponse wraps a list of subjects.
 type subjectsResponse struct {
-	Subjects []keycloak.Subject `json:"subjects"`
+	Subjects []model.Subject `json:"subjects"`
 }
 
 // lookupRequest is the body for a bulk subject lookup.
@@ -27,9 +28,9 @@ type lookupRequest struct {
 //	@Success	200	{object}	subjectsResponse
 //	@Router	/subjects [get]
 func (a *App) SearchSubjectsHandler(c echo.Context) error {
-	subjects, err := a.keycloak.SearchSubjects(c.Request().Context(), c.QueryParam("search"))
+	subjects, err := a.userinfo.Search(c.Request().Context(), c.QueryParam("search"))
 	if err != nil {
-		return keycloakError(err)
+		return storeError(err)
 	}
 	return c.JSON(http.StatusOK, &subjectsResponse{Subjects: subjects})
 }
@@ -50,19 +51,10 @@ func (a *App) LookupSubjectsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	ctx := c.Request().Context()
-	subjects := make([]keycloak.Subject, 0, len(req.SubjectIDs))
-	for _, id := range req.SubjectIDs {
-		subject, err := a.keycloak.GetSubject(ctx, id)
-		if err != nil {
-			if errors.Is(err, keycloak.ErrNotFound) {
-				continue
-			}
-			return keycloakError(err)
-		}
-		subjects = append(subjects, *subject)
+	subjects, err := a.userinfo.GetMany(c.Request().Context(), req.SubjectIDs)
+	if err != nil {
+		return storeError(err)
 	}
-
 	return c.JSON(http.StatusOK, &subjectsResponse{Subjects: subjects})
 }
 
@@ -72,30 +64,36 @@ func (a *App) LookupSubjectsHandler(c echo.Context) error {
 //	@Produce	json
 //	@Param	subject-id	path	string	true	"Subject identifier (username)"
 //	@Param	user	query	string	true	"The acting user"
-//	@Success	200	{object}	keycloak.Subject
+//	@Success	200	{object}	model.Subject
 //	@Failure	404	{object}	map[string]string
 //	@Router	/subjects/{subject-id} [get]
 func (a *App) GetSubjectHandler(c echo.Context) error {
-	subject, err := a.keycloak.GetSubject(c.Request().Context(), c.Param("subject-id"))
+	subject, err := a.userinfo.Get(c.Request().Context(), c.Param("subject-id"))
 	if err != nil {
-		return keycloakError(err)
+		if errors.Is(err, userinfo.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+		}
+		return err
 	}
 	return c.JSON(http.StatusOK, subject)
 }
 
-// SubjectGroupsHandler handles GET /subjects/:subject-id/groups.
+// SubjectGroupsHandler handles GET /subjects/:subject-id/groups. Groups reached
+// through nesting are included, matching what Grouper reported and what
+// permission lookup expands.
 //
 //	@Summary	List the groups a subject belongs to
 //	@Produce	json
 //	@Param	subject-id	path	string	true	"Subject identifier (username)"
+//	@Param	group_type	query	string	false	"Restrict to one kind of group"
 //	@Param	user	query	string	true	"The acting user"
 //	@Success	200	{object}	groupListResponse
-//	@Failure	404	{object}	map[string]string
 //	@Router	/subjects/{subject-id}/groups [get]
 func (a *App) SubjectGroupsHandler(c echo.Context) error {
-	groups, err := a.keycloak.SubjectGroups(c.Request().Context(), c.Param("subject-id"))
+	groups, err := a.store.GroupsForSubject(c.Request().Context(),
+		c.Param("subject-id"), c.QueryParam("group_type"))
 	if err != nil {
-		return keycloakError(err)
+		return storeError(err)
 	}
 	return c.JSON(http.StatusOK, &groupListResponse{Groups: groups})
 }

@@ -73,7 +73,9 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		// The ping failure is the error worth reporting; a close failure on a
+		// pool that never connected adds nothing.
+		_ = db.Close()
 		return nil, fmt.Errorf("could not reach the database; check db.uri and that the service can route to it: %w", err)
 	}
 
@@ -232,7 +234,8 @@ func scanGroup(row interface{ Scan(...any) error }) (*model.Group, error) {
 }
 
 func scanGroups(rows *sql.Rows) ([]model.Group, error) {
-	defer rows.Close()
+	// Close reports the same failure rows.Err() does, which is checked below.
+	defer func() { _ = rows.Close() }()
 
 	groups := make([]model.Group, 0)
 	for rows.Next() {

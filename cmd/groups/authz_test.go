@@ -5,14 +5,15 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/model"
 	"github.com/cyverse-de/groups/permissions"
+	"github.com/cyverse-de/groups/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRequireUser(t *testing.T) {
-	app := newTestApp(&mockKeycloak{})
+	app := newTestApp(&mockStore{})
 
 	// No user query parameter -> 400.
 	rec := doRequestAs(app, http.MethodGet, "/groups/abc", "", "")
@@ -23,11 +24,6 @@ func TestCreateGroupGrantsOwner(t *testing.T) {
 	var granted struct {
 		resourceType, resourceName, subjectType, subjectID, level string
 	}
-	kc := &mockKeycloak{
-		createGroupFn: func(_ context.Context, spec keycloak.GroupSpec) (*keycloak.Group, error) {
-			return &keycloak.Group{ID: "g-new", Name: spec.Name}, nil
-		},
-	}
 	perms := &mockPermissions{
 		grantFn: func(_ context.Context, rt, rn, st, sid, level string) error {
 			granted.resourceType, granted.resourceName = rt, rn
@@ -35,9 +31,9 @@ func TestCreateGroupGrantsOwner(t *testing.T) {
 			return nil
 		},
 	}
-	app := newTestAppWith(kc, perms)
+	app := newTestAppWith(&mockStore{}, perms)
 
-	rec := doRequestAs(app, http.MethodPost, "/groups", `{"name":"team-a"}`, "alice")
+	rec := doRequestAs(app, http.MethodPost, "/groups", `{"group_type":"team","name":"Ecology"}`, "alice")
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	assert.Equal(t, resourceTypeGroup, granted.resourceType)
@@ -47,28 +43,21 @@ func TestCreateGroupGrantsOwner(t *testing.T) {
 	assert.Equal(t, permissions.LevelOwn, granted.level)
 }
 
+// The owner grant is an HTTP call made inside the database transaction, so a
+// failed grant must abort the transaction rather than leave an ownerless group.
 func TestCreateGroupRollsBackOnGrantFailure(t *testing.T) {
-	deleted := false
-	kc := &mockKeycloak{
-		createGroupFn: func(_ context.Context, spec keycloak.GroupSpec) (*keycloak.Group, error) {
-			return &keycloak.Group{ID: "g-new", Name: spec.Name}, nil
-		},
-		deleteGroupFn: func(_ context.Context, id string) error {
-			deleted = true
-			assert.Equal(t, "g-new", id)
-			return nil
-		},
-	}
+	s := &mockStore{}
 	perms := &mockPermissions{
-		grantFn: func(_ context.Context, _, _, _, _, _ string) error {
+		grantFn: func(context.Context, string, string, string, string, string) error {
 			return assert.AnError
 		},
 	}
-	app := newTestAppWith(kc, perms)
+	app := newTestAppWith(s, perms)
 
-	rec := doRequestAs(app, http.MethodPost, "/groups", `{"name":"team-a"}`, "alice")
+	rec := doRequestAs(app, http.MethodPost, "/groups", `{"group_type":"team","name":"Ecology"}`, "alice")
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.True(t, deleted, "group should be rolled back when the owner grant fails")
+	assert.False(t, s.committed,
+		"the transaction must not commit when the owner grant fails")
 }
 
 func TestUpdateGroupForbiddenWithoutWrite(t *testing.T) {
@@ -78,87 +67,92 @@ func TestUpdateGroupForbiddenWithoutWrite(t *testing.T) {
 			return false, nil
 		},
 	}
-	app := newTestAppWith(&mockKeycloak{}, perms)
+	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequestAs(app, http.MethodPut, "/groups/g1", `{"name":"x"}`, "mallory")
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
 func TestGetGroupAllowedByMembership(t *testing.T) {
-	kc := &mockKeycloak{
-		groupMembersFn: func(_ context.Context, _ string) ([]keycloak.Subject, error) {
-			return []keycloak.Subject{{ID: "bob"}}, nil
-		},
-		getGroupFn: func(_ context.Context, id string) (*keycloak.Group, error) {
-			return &keycloak.Group{ID: id, Name: "team"}, nil
+	s := &mockStore{
+		isEffectiveMemberFn: func(_ context.Context, groupID, username string) (bool, error) {
+			assert.Equal(t, "g1", groupID)
+			return username == "bob", nil
 		},
 	}
-	// Permission check denies, so access must come from membership.
-	perms := &mockPermissions{
-		checkFn: func(context.Context, string, string, string, string, string, bool) (bool, error) {
-			return false, nil
-		},
-	}
-	app := newTestAppWith(kc, perms)
+	// Permission checks deny, so access must come from membership.
+	app := newTestAppWith(s, denyAllPermissions())
 
 	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "bob")
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestGetGroupForbiddenForNonMember(t *testing.T) {
-	kc := &mockKeycloak{
-		groupMembersFn: func(_ context.Context, _ string) ([]keycloak.Subject, error) {
-			return []keycloak.Subject{{ID: "bob"}}, nil
+	s := &mockStore{
+		isEffectiveMemberFn: func(_ context.Context, _, username string) (bool, error) {
+			return username == "bob", nil
 		},
 	}
-	perms := &mockPermissions{
-		checkFn: func(context.Context, string, string, string, string, string, bool) (bool, error) {
-			return false, nil
-		},
-	}
-	app := newTestAppWith(kc, perms)
+	app := newTestAppWith(s, denyAllPermissions())
 
 	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "carol")
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
-func TestDeleteGroupRemovesPermissionsResource(t *testing.T) {
-	resourceDeleted := false
-	kc := &mockKeycloak{
-		deleteGroupFn: func(_ context.Context, _ string) error { return nil },
-	}
-	perms := &mockPermissions{
-		checkFn: func(context.Context, string, string, string, string, string, bool) (bool, error) {
+// Membership through a nested group grants access, because the check reads
+// effective rather than direct membership.
+func TestGetGroupAllowedByNestedMembership(t *testing.T) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
 			return true, nil
 		},
-		deleteResourceFn: func(_ context.Context, rt, rn string) error {
-			resourceDeleted = true
-			assert.Equal(t, resourceTypeGroup, rt)
-			assert.Equal(t, "g1", rn)
-			return nil
+		listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+			// The user is not a direct member: they are in a nested group.
+			return []model.MemberRef{{ID: "team-1", Type: model.MemberTypeGroup}}, nil
 		},
 	}
-	app := newTestAppWith(kc, perms)
+	app := newTestAppWith(s, denyAllPermissions())
+
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "carol")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestDeleteGroupRemovesPermissionsResource(t *testing.T) {
+	resourceDeleted := false
+	perms := allowAllPermissions()
+	perms.deleteResourceFn = func(_ context.Context, rt, rn string) error {
+		resourceDeleted = true
+		assert.Equal(t, resourceTypeGroup, rt)
+		assert.Equal(t, "g1", rn)
+		return nil
+	}
+	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequestAs(app, http.MethodDelete, "/groups/g1", "", "alice")
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, resourceDeleted)
 }
 
-func TestAdminUserBypassesMemberAuthz(t *testing.T) {
-	kc := &mockKeycloak{
-		groupMembersFn: func(_ context.Context, id string) ([]keycloak.Subject, error) {
-			assert.Equal(t, "g1", id)
-			return []keycloak.Subject{{ID: "alice"}}, nil
-		},
+// A failure cleaning up the permissions resource leaves an orphan but must not
+// fail the request: the group is already gone.
+func TestDeleteGroupSucceedsWhenResourceCleanupFails(t *testing.T) {
+	perms := allowAllPermissions()
+	perms.deleteResourceFn = func(context.Context, string, string) error {
+		return assert.AnError
 	}
-	// Deny every permission check; only the admin bypass can let the request through.
-	perms := &mockPermissions{
-		checkFn: func(_ context.Context, _, _, _, _, _ string, _ bool) (bool, error) {
+	app := newTestAppWith(&mockStore{}, perms)
+
+	rec := doRequestAs(app, http.MethodDelete, "/groups/g1", "", "alice")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestAdminUserBypassesMemberAuthz(t *testing.T) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
 			return false, nil
 		},
 	}
-	app := newTestAppWith(kc, perms)
+	app := newTestAppWith(s, denyAllPermissions())
 	app.adminUsers = map[string]struct{}{"permissions-svc": {}}
 
 	rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "permissions-svc")
@@ -166,38 +160,36 @@ func TestAdminUserBypassesMemberAuthz(t *testing.T) {
 }
 
 func TestAdminUserBypassesLevelAuthz(t *testing.T) {
-	kc := &mockKeycloak{
-		updateGroupFn: func(_ context.Context, id string, spec keycloak.GroupSpec) (*keycloak.Group, error) {
-			return &keycloak.Group{ID: id, Name: spec.Name}, nil
-		},
-	}
-	perms := &mockPermissions{
-		checkFn: func(_ context.Context, _, _, _, _, _ string, _ bool) (bool, error) {
-			return false, nil
-		},
-	}
-	app := newTestAppWith(kc, perms)
+	app := newTestAppWith(&mockStore{}, denyAllPermissions())
 	app.adminUsers = map[string]struct{}{"permissions-svc": {}}
 
-	rec := doRequestAs(app, http.MethodPut, "/groups/g1", `{"name":"team-a"}`, "permissions-svc")
+	rec := doRequestAs(app, http.MethodPut, "/groups/g1", `{"name":"Ecology"}`, "permissions-svc")
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestNonAdminUserStillForbidden(t *testing.T) {
-	kc := &mockKeycloak{
-		groupMembersFn: func(_ context.Context, _ string) ([]keycloak.Subject, error) {
-			return []keycloak.Subject{{ID: "alice"}}, nil
-		},
-	}
-	perms := &mockPermissions{
-		checkFn: func(_ context.Context, _, _, _, _, _ string, _ bool) (bool, error) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
 			return false, nil
 		},
 	}
-	app := newTestAppWith(kc, perms)
+	app := newTestAppWith(s, denyAllPermissions())
 	app.adminUsers = map[string]struct{}{"permissions-svc": {}}
 
-	// "mallory" is not an admin and not a member (members list is only alice) -> 403.
 	rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "mallory")
 	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// A store failure during the membership check must surface as an error rather
+// than as a denial that looks like a policy decision.
+func TestMembershipCheckErrorIsNotADenial(t *testing.T) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
+			return false, store.ErrNotFound
+		},
+	}
+	app := newTestAppWith(s, denyAllPermissions())
+
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "carol")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

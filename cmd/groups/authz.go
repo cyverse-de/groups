@@ -88,16 +88,13 @@ func (a *App) requireReadOrMember(c echo.Context, groupID string) error {
 	return nil
 }
 
-// isMember reports whether the named user is a member of the group.
+// isMember reports whether the named user belongs to the group, through any
+// depth of nesting. This reads the materialized effective membership, so it is
+// an index probe rather than a fetch of the whole member list.
 func (a *App) isMember(ctx context.Context, groupID, user string) (bool, error) {
-	members, err := a.keycloak.GroupMembers(ctx, groupID)
+	member, err := a.store.IsEffectiveMember(ctx, groupID, user)
 	if err != nil {
-		return false, keycloakError(err)
+		return false, storeError(err)
 	}
-	for _, m := range members {
-		if m.ID == user {
-			return true, nil
-		}
-	}
-	return false, nil
+	return member, nil
 }

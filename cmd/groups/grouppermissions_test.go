@@ -29,7 +29,7 @@ func TestListPermissions(t *testing.T) {
 			}, nil
 		},
 	}
-	app := newTestAppWith(&mockKeycloak{}, perms)
+	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequest(app, http.MethodGet, "/groups/g1/permissions", "")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -50,7 +50,7 @@ func TestGrantPermission(t *testing.T) {
 			return nil
 		},
 	}
-	app := newTestAppWith(&mockKeycloak{}, perms)
+	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequest(app, http.MethodPut, "/groups/g1/permissions/user/bob", `{"level":"write"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -63,14 +63,14 @@ func TestGrantPermission(t *testing.T) {
 }
 
 func TestGrantPermissionRejectsInvalidLevel(t *testing.T) {
-	app := newTestAppWith(&mockKeycloak{}, &mockPermissions{checkFn: allowAllCheck()})
+	app := newTestAppWith(&mockStore{}, &mockPermissions{checkFn: allowAllCheck()})
 
 	rec := doRequest(app, http.MethodPut, "/groups/g1/permissions/user/bob", `{"level":"superuser"}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestGrantPermissionRejectsInvalidSubjectType(t *testing.T) {
-	app := newTestAppWith(&mockKeycloak{}, &mockPermissions{checkFn: allowAllCheck()})
+	app := newTestAppWith(&mockStore{}, &mockPermissions{checkFn: allowAllCheck()})
 
 	rec := doRequest(app, http.MethodPut, "/groups/g1/permissions/robot/bob", `{"level":"write"}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -83,7 +83,7 @@ func TestGrantPermissionForbiddenWithoutOwn(t *testing.T) {
 			return false, nil
 		},
 	}
-	app := newTestAppWith(&mockKeycloak{}, perms)
+	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequest(app, http.MethodPut, "/groups/g1/permissions/user/bob", `{"level":"write"}`)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
@@ -96,7 +96,7 @@ func TestRevokePermissionNotFound(t *testing.T) {
 			return permissions.ErrNotFound
 		},
 	}
-	app := newTestAppWith(&mockKeycloak{}, perms)
+	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequest(app, http.MethodDelete, "/groups/g1/permissions/user/bob", "")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
@@ -114,7 +114,7 @@ func TestRevokePermission(t *testing.T) {
 			return nil
 		},
 	}
-	app := newTestAppWith(&mockKeycloak{}, perms)
+	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequest(app, http.MethodDelete, "/groups/g1/permissions/user/bob", "")
 	require.Equal(t, http.StatusOK, rec.Code)

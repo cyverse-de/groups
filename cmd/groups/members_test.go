@@ -5,38 +5,122 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
-	"sync"
+	"strings"
 	"testing"
 
-	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/model"
+	"github.com/cyverse-de/groups/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGetMembers(t *testing.T) {
-	app := newTestApp(&mockKeycloak{
-		groupMembersFn: func(_ context.Context, id string) ([]keycloak.Subject, error) {
-			assert.Equal(t, "g1", id)
-			return []keycloak.Subject{{ID: "alice"}, {ID: "bob"}}, nil
-		},
+	t.Run("hydrates users from the directory", func(t *testing.T) {
+		app := newTestApp(&mockStore{
+			listMembersFn: func(_ context.Context, id string) ([]model.MemberRef, error) {
+				assert.Equal(t, "g1", id)
+				return []model.MemberRef{
+					{ID: "alice", Type: model.MemberTypeUser},
+					{ID: "bob", Type: model.MemberTypeUser},
+				}, nil
+			},
+		})
+		app.userinfo = &mockUserInfo{
+			getManyFn: func(_ context.Context, usernames []string) ([]model.Subject, error) {
+				assert.ElementsMatch(t, []string{"alice", "bob"}, usernames,
+					"users must be resolved in one batch")
+				return []model.Subject{
+					{ID: "alice", Name: "Alice A", Email: "alice@example.org", SourceID: model.SourceUser},
+					{ID: "bob", Name: "Bob B", SourceID: model.SourceUser},
+				}, nil
+			},
+		}
+
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp membersResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Members, 2)
+		assert.Equal(t, "Alice A", resp.Members[0].Name)
+		assert.Equal(t, "alice@example.org", resp.Members[0].Email)
 	})
 
-	rec := doRequest(app, http.MethodGet, "/groups/g1/members", "")
-	require.Equal(t, http.StatusOK, rec.Code)
+	t.Run("reports a nested group with the group source", func(t *testing.T) {
+		app := newTestApp(&mockStore{
+			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+				return []model.MemberRef{
+					{ID: "team-1", Type: model.MemberTypeGroup},
+					{ID: "alice", Type: model.MemberTypeUser},
+				}, nil
+			},
+			getGroupFn: func(_ context.Context, id string) (*model.Group, error) {
+				return &model.Group{ID: id, GroupType: model.GroupTypeTeam, Name: "Ecology"}, nil
+			},
+		})
 
-	var resp membersResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Len(t, resp.Members, 2)
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp membersResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Members, 2)
+
+		byID := map[string]model.Subject{}
+		for _, m := range resp.Members {
+			byID[m.ID] = m
+		}
+		assert.Equal(t, model.SourceGroup, byID["team-1"].SourceID)
+		assert.Equal(t, "Ecology", byID["team-1"].Name)
+		assert.Equal(t, model.SourceUser, byID["alice"].SourceID)
+	})
+
+	t.Run("keeps a member the directory does not know", func(t *testing.T) {
+		app := newTestApp(&mockStore{
+			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+				return []model.MemberRef{{ID: "ghost", Type: model.MemberTypeUser}}, nil
+			},
+		})
+		app.userinfo = &mockUserInfo{
+			getManyFn: func(context.Context, []string) ([]model.Subject, error) {
+				return []model.Subject{}, nil
+			},
+		}
+
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp membersResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Members, 1,
+			"membership lives in our database, so an unknown user must still be reported")
+		assert.Equal(t, "ghost", resp.Members[0].ID)
+	})
+
+	t.Run("reports a missing group as 404", func(t *testing.T) {
+		app := newTestApp(&mockStore{
+			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+				return nil, store.ErrNotFound
+			},
+		})
+		rec := doRequest(app, http.MethodGet, "/groups/missing/members", "")
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
 }
 
 func TestAddMembersBulkCollectsResults(t *testing.T) {
-	app := newTestApp(&mockKeycloak{
-		addMemberFn: func(_ context.Context, _ string, username string) (keycloak.Subject, error) {
-			if username == "bad" {
-				return keycloak.Subject{}, errors.New("nope")
+	app := newTestApp(&mockStore{
+		addMembersFn: func(_ context.Context, _ string, ids []string, addedBy string) ([]model.MemberChange, error) {
+			assert.Equal(t, "tester", addedBy)
+			changes := make([]model.MemberChange, 0, len(ids))
+			for _, id := range ids {
+				change := model.MemberChange{SubjectID: id, Type: model.MemberTypeUser}
+				if id == "bad" {
+					change.Err = errors.New("nope")
+				}
+				changes = append(changes, change)
 			}
-			return keycloak.Subject{ID: username, Name: username, SourceID: "ldap"}, nil
+			return changes, nil
 		},
 	})
 
@@ -53,58 +137,114 @@ func TestAddMembersBulkCollectsResults(t *testing.T) {
 		byID[r.SubjectID] = r
 	}
 	assert.True(t, byID["alice"].Success)
-	assert.Equal(t, "ldap", byID["alice"].SourceID)
+	assert.Equal(t, model.SourceUser, byID["alice"].SourceID)
 	assert.Equal(t, "alice", byID["alice"].SubjectName)
 	assert.False(t, byID["bad"].Success)
 	assert.Equal(t, "nope", byID["bad"].Error)
+	assert.Empty(t, byID["bad"].SourceID, "a failed change has no resolved subject")
 	assert.True(t, byID["carol"].Success)
-	assert.Equal(t, "ldap", byID["carol"].SourceID)
+}
+
+func TestAddMembersReportsNestedGroups(t *testing.T) {
+	app := newTestApp(&mockStore{
+		addMembersFn: func(context.Context, string, []string, string) ([]model.MemberChange, error) {
+			return []model.MemberChange{{SubjectID: "team-1", Type: model.MemberTypeGroup}}, nil
+		},
+		getGroupFn: func(_ context.Context, id string) (*model.Group, error) {
+			return &model.Group{ID: id, Name: "Ecology"}, nil
+		},
+	})
+
+	rec := doRequest(app, http.MethodPost, "/groups/g1/members", `{"members":["team-1"]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp membersResults
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, model.SourceGroup, resp.Results[0].SourceID)
+	assert.Equal(t, "Ecology", resp.Results[0].SubjectName)
+}
+
+// A directory outage must not fail a membership change that already committed;
+// the names are decoration on a completed operation.
+func TestAddMembersSurvivesDirectoryFailure(t *testing.T) {
+	app := newTestApp(&mockStore{})
+	app.userinfo = &mockUserInfo{
+		getManyFn: func(context.Context, []string) ([]model.Subject, error) {
+			return nil, assert.AnError
+		},
+	}
+
+	rec := doRequest(app, http.MethodPost, "/groups/g1/members", `{"members":["alice"]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp membersResults
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Results, 1)
+	assert.True(t, resp.Results[0].Success)
+	assert.Equal(t, "alice", resp.Results[0].SubjectName, "falls back to the subject id")
 }
 
 func TestReplaceMembersReconciles(t *testing.T) {
-	var (
-		mu      sync.Mutex
-		added   []string
-		removed []string
-	)
-	app := newTestApp(&mockKeycloak{
-		groupMembersFn: func(_ context.Context, _ string) ([]keycloak.Subject, error) {
-			return []keycloak.Subject{{ID: "alice"}, {ID: "bob"}}, nil
-		},
-		addMemberFn: func(_ context.Context, _ string, username string) (keycloak.Subject, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			added = append(added, username)
-			return keycloak.Subject{ID: username}, nil
-		},
-		removeMemberFn: func(_ context.Context, _ string, username string) (keycloak.Subject, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			removed = append(removed, username)
-			return keycloak.Subject{ID: username}, nil
+	var captured []string
+	app := newTestApp(&mockStore{
+		replaceMembersFn: func(_ context.Context, _ string, ids []string, _ string) ([]model.MemberChange, error) {
+			captured = ids
+			return []model.MemberChange{
+				{SubjectID: "bob", Type: model.MemberTypeUser},
+				{SubjectID: "carol", Type: model.MemberTypeUser},
+			}, nil
 		},
 	})
 
-	// Desired membership {alice, carol}: keep alice, remove bob, add carol.
-	rec := doRequest(app, http.MethodPut, "/groups/g1/members",
-		`{"members":["alice","carol"]}`)
+	rec := doRequest(app, http.MethodPut, "/groups/g1/members", `{"members":["alice","carol"]}`)
 	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"alice", "carol"}, captured)
 
-	sort.Strings(added)
-	sort.Strings(removed)
-	assert.Equal(t, []string{"carol"}, added)
-	assert.Equal(t, []string{"bob"}, removed)
+	var resp membersResults
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Len(t, resp.Results, 2, "only the differences are reported")
 }
 
-func TestRemoveSingleMember(t *testing.T) {
-	app := newTestApp(&mockKeycloak{
-		removeMemberFn: func(_ context.Context, groupID, username string) (keycloak.Subject, error) {
-			assert.Equal(t, "g1", groupID)
-			assert.Equal(t, "alice", username)
-			return keycloak.Subject{ID: username}, nil
-		},
+func TestSingleMemberOperations(t *testing.T) {
+	t.Run("remove", func(t *testing.T) {
+		called := false
+		app := newTestApp(&mockStore{
+			removeMembersFn: func(_ context.Context, groupID string, ids []string) ([]model.MemberChange, error) {
+				called = true
+				assert.Equal(t, "g1", groupID)
+				assert.Equal(t, []string{"alice"}, ids)
+				return changesFor(ids), nil
+			},
+		})
+
+		rec := doRequest(app, http.MethodDelete, "/groups/g1/members/alice", "")
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.True(t, called)
 	})
 
-	rec := doRequest(app, http.MethodDelete, "/groups/g1/members/alice", "")
-	assert.Equal(t, http.StatusOK, rec.Code)
+	// A rejected single member is an error, not a 200 carrying a failed result.
+	t.Run("add reports a rejected member as an error", func(t *testing.T) {
+		app := newTestApp(&mockStore{
+			addMembersFn: func(_ context.Context, _ string, ids []string, _ string) ([]model.MemberChange, error) {
+				return []model.MemberChange{{SubjectID: ids[0], Err: store.ErrCycle}}, nil
+			},
+		})
+
+		rec := doRequest(app, http.MethodPut, "/groups/g1/members/team-1", "")
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+}
+
+func TestBulkMembershipSizeLimit(t *testing.T) {
+	app := newTestApp(&mockStore{})
+
+	members := make([]string, maxBulkMembers+1)
+	for i := range members {
+		members[i] = "user"
+	}
+	body := `{"members":["` + strings.Join(members, `","`) + `"]}`
+
+	rec := doRequest(app, http.MethodPost, "/groups/g1/members", body)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 }

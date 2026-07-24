@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/": {
             "get": {
-                "description": "Returns the service name, version, and Keycloak connectivity.",
+                "description": "Returns the service name, version, and backend connectivity.",
                 "produces": [
                     "application/json"
                 ],
@@ -37,12 +37,42 @@ const docTemplate = `{
                 "produces": [
                     "application/json"
                 ],
-                "summary": "Search groups",
+                "summary": "List groups",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Search term matched against group names",
+                        "description": "Restrict to one kind of group",
+                        "name": "group_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Restrict to groups owned by this user",
+                        "name": "owner",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Restrict to groups this user belongs to, including through nesting",
+                        "name": "member",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Match against group name and description",
                         "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum groups to return",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Groups to skip",
+                        "name": "offset",
                         "in": "query"
                     }
                 ],
@@ -78,11 +108,76 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/keycloak.Group"
+                            "$ref": "#/definitions/model.Group"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/groups/lookup": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Look up a group by its identity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The kind of group",
+                        "name": "group_type",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Owning user, for group types that have one",
+                        "name": "owner",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The group's short name",
+                        "name": "name",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Group"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -102,7 +197,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -112,7 +207,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/keycloak.Group"
+                            "$ref": "#/definitions/model.Group"
                         }
                     },
                     "404": {
@@ -137,18 +232,18 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Updated group fields",
+                        "description": "Fields to change",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/main.groupRequest"
+                            "$ref": "#/definitions/main.groupUpdateRequest"
                         }
                     }
                 ],
@@ -156,7 +251,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/keycloak.Group"
+                            "$ref": "#/definitions/model.Group"
                         }
                     },
                     "400": {
@@ -176,6 +271,15 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             },
@@ -184,7 +288,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -215,7 +319,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -250,7 +354,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -294,13 +398,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Usernames to add",
+                        "description": "Usernames or group identifiers to add",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -331,13 +435,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Usernames to remove",
+                        "description": "Usernames or group identifiers to remove",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -362,14 +466,14 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Username (subject ID)",
+                        "description": "Username or group identifier",
                         "name": "subject",
                         "in": "path",
                         "required": true
@@ -395,14 +499,14 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Group UUID",
+                        "description": "Group identifier",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Username (subject ID)",
+                        "description": "Username or group identifier",
                         "name": "subject",
                         "in": "path",
                         "required": true
@@ -677,7 +781,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/keycloak.Subject"
+                            "$ref": "#/definitions/model.Subject"
                         }
                     },
                     "404": {
@@ -708,6 +812,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Restrict to one kind of group",
+                        "name": "group_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "The acting user",
                         "name": "user",
                         "in": "query",
@@ -720,68 +830,21 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/main.groupListResponse"
                         }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
                     }
                 }
             }
         }
     },
     "definitions": {
-        "keycloak.Group": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "display_extension": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "keycloak.Subject": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "first_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "institution": {
-                    "type": "string"
-                },
-                "last_name": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "source_id": {
-                    "type": "string"
-                }
-            }
-        },
         "main.StatusResponse": {
             "type": "object",
             "properties": {
+                "database": {
+                    "description": "Database reports whether group storage is reachable. False means the\nservice cannot serve any group request.",
+                    "type": "boolean"
+                },
                 "keycloak": {
+                    "description": "Keycloak reports whether user attributes are reachable. False degrades\nnames and email addresses but leaves group membership working.",
                     "type": "boolean"
                 },
                 "service": {
@@ -798,7 +861,7 @@ const docTemplate = `{
                 "groups": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/keycloak.Group"
+                        "$ref": "#/definitions/model.Group"
                     }
                 }
             }
@@ -831,7 +894,27 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
-                "display_extension": {
+                "display_name": {
+                    "type": "string"
+                },
+                "group_type": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.groupUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
                     "type": "string"
                 },
                 "name": {
@@ -887,7 +970,7 @@ const docTemplate = `{
                 "members": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/keycloak.Subject"
+                        "$ref": "#/definitions/model.Subject"
                     }
                 }
             }
@@ -917,8 +1000,63 @@ const docTemplate = `{
                 "subjects": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/keycloak.Subject"
+                        "$ref": "#/definitions/model.Subject"
                     }
+                }
+            }
+        },
+        "model.Group": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "group_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.Subject": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "institution": {
+                    "type": "string"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "string"
                 }
             }
         },
@@ -949,7 +1087,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "groups",
-	Description:      "Group management API for the CyVerse Discovery Environment, backed by Keycloak.",
+	Description:      "Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from Keycloak.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

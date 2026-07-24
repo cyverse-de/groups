@@ -5,113 +5,202 @@ import (
 	"sync"
 
 	"github.com/cyverse-de/groups/eventing"
-	"github.com/cyverse-de/groups/keycloak"
+	"github.com/cyverse-de/groups/model"
 	"github.com/cyverse-de/groups/permissions"
+	"github.com/cyverse-de/groups/store"
+	"github.com/cyverse-de/groups/userinfo"
 	"github.com/labstack/echo/v4"
 )
 
-// mockKeycloak is a configurable stub implementation of keycloak.Client. Each
-// method delegates to the corresponding function field when set, and otherwise
-// returns zero values.
-type mockKeycloak struct {
-	pingFn           func(ctx context.Context) error
-	searchGroupsFn   func(ctx context.Context, search string) ([]keycloak.Group, error)
-	getGroupFn       func(ctx context.Context, id string) (*keycloak.Group, error)
-	createGroupFn    func(ctx context.Context, spec keycloak.GroupSpec) (*keycloak.Group, error)
-	updateGroupFn    func(ctx context.Context, id string, spec keycloak.GroupSpec) (*keycloak.Group, error)
+// mockStore is a configurable stub implementing both store.Store and store.Tx:
+// handler tests exercise routing and authorization, and the real transaction
+// semantics are covered by the pgstore integration tests. Each method delegates
+// to its function field when set and otherwise returns a benign default.
+type mockStore struct {
+	getGroupFn          func(ctx context.Context, id string) (*model.Group, error)
+	lookupGroupFn       func(ctx context.Context, ref model.Ref) (*model.Group, error)
+	listGroupsFn        func(ctx context.Context, f store.ListFilter) ([]model.Group, error)
+	listMembersFn       func(ctx context.Context, groupID string) ([]model.MemberRef, error)
+	isEffectiveMemberFn func(ctx context.Context, groupID, username string) (bool, error)
+	groupsForSubjectFn  func(ctx context.Context, username, groupType string) ([]model.Group, error)
+
+	createGroupFn    func(ctx context.Context, spec model.GroupSpec) (*model.Group, error)
+	updateGroupFn    func(ctx context.Context, id string, upd model.GroupUpdate) (*model.Group, error)
 	deleteGroupFn    func(ctx context.Context, id string) error
-	groupMembersFn   func(ctx context.Context, id string) ([]keycloak.Subject, error)
-	addMemberFn      func(ctx context.Context, groupID, username string) (keycloak.Subject, error)
-	removeMemberFn   func(ctx context.Context, groupID, username string) (keycloak.Subject, error)
-	searchSubjectsFn func(ctx context.Context, search string) ([]keycloak.Subject, error)
-	getSubjectFn     func(ctx context.Context, username string) (*keycloak.Subject, error)
-	subjectGroupsFn  func(ctx context.Context, username string) ([]keycloak.Group, error)
+	addMembersFn     func(ctx context.Context, groupID string, ids []string, addedBy string) ([]model.MemberChange, error)
+	removeMembersFn  func(ctx context.Context, groupID string, ids []string) ([]model.MemberChange, error)
+	replaceMembersFn func(ctx context.Context, groupID string, ids []string, addedBy string) ([]model.MemberChange, error)
+
+	pingFn func(ctx context.Context) error
+
+	// committed records whether the most recent WithTx reached its commit, so a
+	// test can assert that a failure inside the transaction rolled it back.
+	committed bool
 }
 
-var _ keycloak.Client = (*mockKeycloak)(nil)
+var (
+	_ store.Store = (*mockStore)(nil)
+	_ store.Tx    = (*mockStore)(nil)
+)
 
-func (m *mockKeycloak) Ping(ctx context.Context) error {
+func (m *mockStore) WithTx(ctx context.Context, fn func(store.Tx) error) error {
+	m.committed = false
+	if err := fn(m); err != nil {
+		return err
+	}
+	m.committed = true
+	return nil
+}
+
+func (m *mockStore) Ping(ctx context.Context) error {
 	if m.pingFn != nil {
 		return m.pingFn(ctx)
 	}
 	return nil
 }
 
-func (m *mockKeycloak) SearchGroups(ctx context.Context, search string) ([]keycloak.Group, error) {
-	if m.searchGroupsFn != nil {
-		return m.searchGroupsFn(ctx, search)
-	}
-	return nil, nil
-}
+func (m *mockStore) Close() error { return nil }
 
-func (m *mockKeycloak) GetGroup(ctx context.Context, id string) (*keycloak.Group, error) {
+func (m *mockStore) GetGroup(ctx context.Context, id string) (*model.Group, error) {
 	if m.getGroupFn != nil {
 		return m.getGroupFn(ctx, id)
 	}
-	return nil, nil
+	return &model.Group{ID: id, GroupType: model.GroupTypeTeam, Name: id}, nil
 }
 
-func (m *mockKeycloak) CreateGroup(ctx context.Context, spec keycloak.GroupSpec) (*keycloak.Group, error) {
+func (m *mockStore) LookupGroup(ctx context.Context, ref model.Ref) (*model.Group, error) {
+	if m.lookupGroupFn != nil {
+		return m.lookupGroupFn(ctx, ref)
+	}
+	return &model.Group{ID: "g1", GroupType: ref.GroupType, Owner: ref.Owner, Name: ref.Name}, nil
+}
+
+func (m *mockStore) ListGroups(ctx context.Context, f store.ListFilter) ([]model.Group, error) {
+	if m.listGroupsFn != nil {
+		return m.listGroupsFn(ctx, f)
+	}
+	return []model.Group{}, nil
+}
+
+func (m *mockStore) ListMembers(ctx context.Context, groupID string) ([]model.MemberRef, error) {
+	if m.listMembersFn != nil {
+		return m.listMembersFn(ctx, groupID)
+	}
+	return []model.MemberRef{}, nil
+}
+
+func (m *mockStore) IsEffectiveMember(ctx context.Context, groupID, username string) (bool, error) {
+	if m.isEffectiveMemberFn != nil {
+		return m.isEffectiveMemberFn(ctx, groupID, username)
+	}
+	return false, nil
+}
+
+func (m *mockStore) GroupsForSubject(ctx context.Context, username, groupType string) ([]model.Group, error) {
+	if m.groupsForSubjectFn != nil {
+		return m.groupsForSubjectFn(ctx, username, groupType)
+	}
+	return []model.Group{}, nil
+}
+
+func (m *mockStore) CreateGroup(ctx context.Context, spec model.GroupSpec) (*model.Group, error) {
 	if m.createGroupFn != nil {
 		return m.createGroupFn(ctx, spec)
 	}
-	return nil, nil
+	return &model.Group{
+		ID: "g-new", GroupType: spec.GroupType, Owner: spec.Owner,
+		Name: spec.Name, Description: spec.Description,
+	}, nil
 }
 
-func (m *mockKeycloak) UpdateGroup(ctx context.Context, id string, spec keycloak.GroupSpec) (*keycloak.Group, error) {
+func (m *mockStore) UpdateGroup(ctx context.Context, id string, upd model.GroupUpdate) (*model.Group, error) {
 	if m.updateGroupFn != nil {
-		return m.updateGroupFn(ctx, id, spec)
+		return m.updateGroupFn(ctx, id, upd)
 	}
-	return nil, nil
+	g := &model.Group{ID: id, GroupType: model.GroupTypeTeam, Name: id}
+	if upd.Name != nil {
+		g.Name = *upd.Name
+	}
+	return g, nil
 }
 
-func (m *mockKeycloak) DeleteGroup(ctx context.Context, id string) error {
+func (m *mockStore) DeleteGroup(ctx context.Context, id string) error {
 	if m.deleteGroupFn != nil {
 		return m.deleteGroupFn(ctx, id)
 	}
 	return nil
 }
 
-func (m *mockKeycloak) GroupMembers(ctx context.Context, id string) ([]keycloak.Subject, error) {
-	if m.groupMembersFn != nil {
-		return m.groupMembersFn(ctx, id)
+func (m *mockStore) AddMembers(ctx context.Context, groupID string, ids []string, addedBy string) ([]model.MemberChange, error) {
+	if m.addMembersFn != nil {
+		return m.addMembersFn(ctx, groupID, ids, addedBy)
 	}
-	return nil, nil
+	return changesFor(ids), nil
 }
 
-func (m *mockKeycloak) AddMember(ctx context.Context, groupID, username string) (keycloak.Subject, error) {
-	if m.addMemberFn != nil {
-		return m.addMemberFn(ctx, groupID, username)
+func (m *mockStore) RemoveMembers(ctx context.Context, groupID string, ids []string) ([]model.MemberChange, error) {
+	if m.removeMembersFn != nil {
+		return m.removeMembersFn(ctx, groupID, ids)
 	}
-	return keycloak.Subject{}, nil
+	return changesFor(ids), nil
 }
 
-func (m *mockKeycloak) RemoveMember(ctx context.Context, groupID, username string) (keycloak.Subject, error) {
-	if m.removeMemberFn != nil {
-		return m.removeMemberFn(ctx, groupID, username)
+func (m *mockStore) ReplaceMembers(ctx context.Context, groupID string, ids []string, addedBy string) ([]model.MemberChange, error) {
+	if m.replaceMembersFn != nil {
+		return m.replaceMembersFn(ctx, groupID, ids, addedBy)
 	}
-	return keycloak.Subject{}, nil
+	return changesFor(ids), nil
 }
 
-func (m *mockKeycloak) SearchSubjects(ctx context.Context, search string) ([]keycloak.Subject, error) {
-	if m.searchSubjectsFn != nil {
-		return m.searchSubjectsFn(ctx, search)
+// changesFor reports every id as a successful user membership change.
+func changesFor(ids []string) []model.MemberChange {
+	changes := make([]model.MemberChange, 0, len(ids))
+	for _, id := range ids {
+		changes = append(changes, model.MemberChange{SubjectID: id, Type: model.MemberTypeUser})
 	}
-	return nil, nil
+	return changes
 }
 
-func (m *mockKeycloak) GetSubject(ctx context.Context, username string) (*keycloak.Subject, error) {
-	if m.getSubjectFn != nil {
-		return m.getSubjectFn(ctx, username)
-	}
-	return nil, nil
+// mockUserInfo is a configurable stub implementation of userinfo.Client.
+type mockUserInfo struct {
+	pingFn    func(ctx context.Context) error
+	getFn     func(ctx context.Context, username string) (*model.Subject, error)
+	getManyFn func(ctx context.Context, usernames []string) ([]model.Subject, error)
+	searchFn  func(ctx context.Context, search string) ([]model.Subject, error)
 }
 
-func (m *mockKeycloak) SubjectGroups(ctx context.Context, username string) ([]keycloak.Group, error) {
-	if m.subjectGroupsFn != nil {
-		return m.subjectGroupsFn(ctx, username)
+var _ userinfo.Client = (*mockUserInfo)(nil)
+
+func (m *mockUserInfo) Ping(ctx context.Context) error {
+	if m.pingFn != nil {
+		return m.pingFn(ctx)
 	}
-	return nil, nil
+	return nil
+}
+
+func (m *mockUserInfo) Get(ctx context.Context, username string) (*model.Subject, error) {
+	if m.getFn != nil {
+		return m.getFn(ctx, username)
+	}
+	return &model.Subject{ID: username, Name: username, SourceID: model.SourceUser}, nil
+}
+
+func (m *mockUserInfo) GetMany(ctx context.Context, usernames []string) ([]model.Subject, error) {
+	if m.getManyFn != nil {
+		return m.getManyFn(ctx, usernames)
+	}
+	subjects := make([]model.Subject, 0, len(usernames))
+	for _, u := range usernames {
+		subjects = append(subjects, model.Subject{ID: u, Name: u, SourceID: model.SourceUser})
+	}
+	return subjects, nil
+}
+
+func (m *mockUserInfo) Search(ctx context.Context, search string) ([]model.Subject, error) {
+	if m.searchFn != nil {
+		return m.searchFn(ctx, search)
+	}
+	return []model.Subject{}, nil
 }
 
 // mockPermissions is a configurable stub implementation of permissions.Client.
@@ -178,6 +267,16 @@ func allowAllPermissions() *mockPermissions {
 	}
 }
 
+// denyAllPermissions returns a mock permissions client that denies every check,
+// so a request that still succeeds did so through membership or the admin bypass.
+func denyAllPermissions() *mockPermissions {
+	return &mockPermissions{
+		checkFn: func(context.Context, string, string, string, string, string, bool) (bool, error) {
+			return false, nil
+		},
+	}
+}
+
 // recordingPublisher records the IDs of groups it was asked to publish changes
 // for, so tests can assert that events were emitted.
 type recordingPublisher struct {
@@ -200,18 +299,19 @@ func (p *recordingPublisher) ids() []string {
 	return append([]string(nil), p.changed...)
 }
 
-// newTestApp builds an App backed by the given Keycloak mock and an allow-all
+// newTestApp builds an App backed by the given store and an allow-all
 // permissions mock, with all routes registered.
-func newTestApp(kc keycloak.Client) *App {
-	return newTestAppWith(kc, allowAllPermissions())
+func newTestApp(s store.Store) *App {
+	return newTestAppWith(s, allowAllPermissions())
 }
 
-// newTestAppWith builds an App backed by the given mock clients and a no-op
-// event publisher.
-func newTestAppWith(kc keycloak.Client, perms permissions.Client) *App {
+// newTestAppWith builds an App backed by the given store and permissions client,
+// with a stub user directory and a no-op event publisher.
+func newTestAppWith(s store.Store, perms permissions.Client) *App {
 	app := &App{
 		router:      echo.New(),
-		keycloak:    kc,
+		store:       s,
+		userinfo:    &mockUserInfo{},
 		permissions: perms,
 		events:      eventing.NoopPublisher{},
 	}

@@ -32,7 +32,8 @@ func (r *reader) ListMembers(ctx context.Context, groupID string) ([]model.Membe
 	if err != nil {
 		return nil, translateErr(err)
 	}
-	defer rows.Close()
+	// Close reports the same failure rows.Err() does, which is checked below.
+	defer func() { _ = rows.Close() }()
 
 	members := make([]model.MemberRef, 0)
 	for rows.Next() {

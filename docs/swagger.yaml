@@ -1,36 +1,16 @@
 basePath: /
 definitions:
-  keycloak.Group:
-    properties:
-      description:
-        type: string
-      display_extension:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  keycloak.Subject:
-    properties:
-      email:
-        type: string
-      first_name:
-        type: string
-      id:
-        type: string
-      institution:
-        type: string
-      last_name:
-        type: string
-      name:
-        type: string
-      source_id:
-        type: string
-    type: object
   main.StatusResponse:
     properties:
+      database:
+        description: |-
+          Database reports whether group storage is reachable. False means the
+          service cannot serve any group request.
+        type: boolean
       keycloak:
+        description: |-
+          Keycloak reports whether user attributes are reachable. False degrades
+          names and email addresses but leaves group membership working.
         type: boolean
       service:
         type: string
@@ -41,7 +21,7 @@ definitions:
     properties:
       groups:
         items:
-          $ref: '#/definitions/keycloak.Group'
+          $ref: '#/definitions/model.Group'
         type: array
     type: object
   main.groupPermission:
@@ -62,7 +42,20 @@ definitions:
     properties:
       description:
         type: string
-      display_extension:
+      display_name:
+        type: string
+      group_type:
+        type: string
+      name:
+        type: string
+      owner:
+        type: string
+    type: object
+  main.groupUpdateRequest:
+    properties:
+      description:
+        type: string
+      display_name:
         type: string
       name:
         type: string
@@ -98,7 +91,7 @@ definitions:
     properties:
       members:
         items:
-          $ref: '#/definitions/keycloak.Subject'
+          $ref: '#/definitions/model.Subject'
         type: array
     type: object
   main.membersResults:
@@ -117,8 +110,44 @@ definitions:
     properties:
       subjects:
         items:
-          $ref: '#/definitions/keycloak.Subject'
+          $ref: '#/definitions/model.Subject'
         type: array
+    type: object
+  model.Group:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      display_name:
+        type: string
+      group_type:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  model.Subject:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      id:
+        type: string
+      institution:
+        type: string
+      last_name:
+        type: string
+      name:
+        type: string
+      source_id:
+        type: string
     type: object
   permissions.Subject:
     properties:
@@ -133,14 +162,14 @@ definitions:
     type: object
 info:
   contact: {}
-  description: Group management API for the CyVerse Discovery Environment, backed
-    by Keycloak.
+  description: Group management API for the CyVerse Discovery Environment. Groups
+    live in the permissions schema of the DE database; user attributes come from Keycloak.
   title: groups
   version: 0.1.0
 paths:
   /:
     get:
-      description: Returns the service name, version, and Keycloak connectivity.
+      description: Returns the service name, version, and backend connectivity.
       produces:
       - application/json
       responses:
@@ -152,10 +181,30 @@ paths:
   /groups:
     get:
       parameters:
-      - description: Search term matched against group names
+      - description: Restrict to one kind of group
+        in: query
+        name: group_type
+        type: string
+      - description: Restrict to groups owned by this user
+        in: query
+        name: owner
+        type: string
+      - description: Restrict to groups this user belongs to, including through nesting
+        in: query
+        name: member
+        type: string
+      - description: Match against group name and description
         in: query
         name: search
         type: string
+      - description: Maximum groups to return
+        in: query
+        name: limit
+        type: integer
+      - description: Groups to skip
+        in: query
+        name: offset
+        type: integer
       produces:
       - application/json
       responses:
@@ -163,7 +212,7 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/main.groupListResponse'
-      summary: Search groups
+      summary: List groups
     post:
       consumes:
       - application/json
@@ -180,9 +229,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/keycloak.Group'
+            $ref: '#/definitions/model.Group'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
           schema:
             additionalProperties:
               type: string
@@ -191,7 +246,7 @@ paths:
   /groups/{id}:
     delete:
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
@@ -208,7 +263,7 @@ paths:
       summary: Delete a group
     get:
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
@@ -219,7 +274,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/keycloak.Group'
+            $ref: '#/definitions/model.Group'
         "404":
           description: Not Found
           schema:
@@ -231,24 +286,24 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
         type: string
-      - description: Updated group fields
+      - description: Fields to change
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/main.groupRequest'
+          $ref: '#/definitions/main.groupUpdateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/keycloak.Group'
+            $ref: '#/definitions/model.Group'
         "400":
           description: Bad Request
           schema:
@@ -261,11 +316,17 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Update a group
   /groups/{id}/members:
     get:
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
@@ -288,12 +349,12 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
         type: string
-      - description: Usernames to add
+      - description: Usernames or group identifiers to add
         in: body
         name: body
         required: true
@@ -311,7 +372,7 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
@@ -339,12 +400,12 @@ paths:
   /groups/{id}/members/{subject}:
     delete:
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
         type: string
-      - description: Username (subject ID)
+      - description: Username or group identifier
         in: path
         name: subject
         required: true
@@ -361,12 +422,12 @@ paths:
       summary: Remove a single member from a group
     put:
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
         type: string
-      - description: Username (subject ID)
+      - description: Username or group identifier
         in: path
         name: subject
         required: true
@@ -386,12 +447,12 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Group UUID
+      - description: Group identifier
         in: path
         name: id
         required: true
         type: string
-      - description: Usernames to remove
+      - description: Usernames or group identifiers to remove
         in: body
         name: body
         required: true
@@ -511,6 +572,43 @@ paths:
               type: string
             type: object
       summary: Grant a subject a permission level on a group
+  /groups/lookup:
+    get:
+      parameters:
+      - description: The kind of group
+        in: query
+        name: group_type
+        required: true
+        type: string
+      - description: Owning user, for group types that have one
+        in: query
+        name: owner
+        type: string
+      - description: The group's short name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Group'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Look up a group by its identity
   /subjects:
     get:
       parameters:
@@ -550,7 +648,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/keycloak.Subject'
+            $ref: '#/definitions/model.Subject'
         "404":
           description: Not Found
           schema:
@@ -566,6 +664,10 @@ paths:
         name: subject-id
         required: true
         type: string
+      - description: Restrict to one kind of group
+        in: query
+        name: group_type
+        type: string
       - description: The acting user
         in: query
         name: user
@@ -578,12 +680,6 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/main.groupListResponse'
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
       summary: List the groups a subject belongs to
   /subjects/lookup:
     post:

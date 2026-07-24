@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -39,10 +40,15 @@ func main() {
 	}
 	l.Infof("done reading config from %s", *configPath)
 
-	app, err := NewApp(config)
+	app, err := NewApp(context.Background(), config)
 	if err != nil {
 		l.Fatal(err)
 	}
+	defer func() {
+		if err := app.Close(); err != nil {
+			l.Errorf("error releasing resources on shutdown: %s", err)
+		}
+	}()
 
 	addr := fmt.Sprintf(":%d", *listenPort)
 	l.Infof("listening on %s", addr)

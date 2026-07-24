@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
 	_ "github.com/cyverse-de/groups/docs"
 	"github.com/cyverse-de/groups/eventing"
-	"github.com/cyverse-de/groups/keycloak"
 	"github.com/cyverse-de/groups/permissions"
+	"github.com/cyverse-de/groups/store"
+	"github.com/cyverse-de/groups/store/pgstore"
+	"github.com/cyverse-de/groups/userinfo"
 	"github.com/knadh/koanf"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -22,7 +25,8 @@ const version = "0.1.0"
 type App struct {
 	config      *koanf.Koanf
 	router      *echo.Echo
-	keycloak    keycloak.Client
+	store       store.Store
+	userinfo    userinfo.Client
 	permissions permissions.Client
 	events      eventing.Publisher
 	adminUsers  map[string]struct{}
@@ -30,25 +34,33 @@ type App struct {
 
 //	@title			groups
 //	@version		0.1.0
-//	@description	Group management API for the CyVerse Discovery Environment, backed by Keycloak.
+//	@description	Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from Keycloak.
 //	@BasePath		/
 //
 // NewApp constructs the application, wires up its clients, and registers routes.
-func NewApp(config *koanf.Koanf) (*App, error) {
-	kc, err := keycloakClientFromConfig(config)
+func NewApp(ctx context.Context, config *koanf.Koanf) (*App, error) {
+	groupStore, err := storeFromConfig(ctx, config)
 	if err != nil {
+		return nil, err
+	}
+
+	users, err := userinfoFromConfig(config)
+	if err != nil {
+		closeStore(groupStore)
 		return nil, err
 	}
 
 	events, err := eventingFromConfig(config)
 	if err != nil {
+		closeStore(groupStore)
 		return nil, err
 	}
 
 	app := &App{
 		config:      config,
 		router:      echo.New(),
-		keycloak:    kc,
+		store:       groupStore,
+		userinfo:    users,
 		permissions: permissions.NewClient(permissionsBaseURL(config)),
 		events:      events,
 		adminUsers:  adminUsersFromConfig(config),
@@ -58,6 +70,45 @@ func NewApp(config *koanf.Koanf) (*App, error) {
 	app.registerRoutes()
 
 	return app, nil
+}
+
+// Close releases the application's resources.
+func (a *App) Close() error {
+	var errs []error
+	if a.events != nil {
+		if err := a.events.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if a.store != nil {
+		if err := a.store.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// closeStore releases the store during a failed startup, where the original
+// error is the one worth returning.
+func closeStore(s store.Store) {
+	if err := s.Close(); err != nil {
+		log.WithField("context", "startup").
+			Warnf("could not close the group store while aborting startup: %s", err)
+	}
+}
+
+// storeFromConfig opens the group store, validating that the database is
+// configured. A missing or unreachable database is fatal: unlike Keycloak or
+// AMQP, nothing the service does works without it.
+func storeFromConfig(ctx context.Context, config *koanf.Koanf) (store.Store, error) {
+	uri := config.String("db.uri")
+	if uri == "" {
+		return nil, fmt.Errorf("db.uri must be set in the configuration")
+	}
+	return pgstore.Open(ctx, pgstore.Config{
+		URI:    uri,
+		Schema: config.String("db.schema"),
+	})
 }
 
 // eventingFromConfig builds the change-event publisher. When amqp.uri is not
@@ -111,7 +162,7 @@ func adminUsersFromConfig(config *koanf.Koanf) map[string]struct{} {
 // reachable at startup, and subsequent grants will surface a clear error.
 func (a *App) ensureResourceType() {
 	err := a.permissions.EnsureResourceType(context.Background(), resourceTypeGroup,
-		"A CyVerse Discovery Environment group managed in Keycloak.")
+		"A CyVerse Discovery Environment group.")
 	if err != nil {
 		log.WithField("context", "startup").
 			Warnf("could not register the %q resource type with the permissions service: %s", resourceTypeGroup, err)
@@ -128,8 +179,10 @@ func (a *App) registerRoutes() {
 
 	groups := a.router.Group("/groups")
 	groups.Use(requireUser)
-	groups.GET("", a.SearchGroupsHandler)
+	groups.GET("", a.ListGroupsHandler)
 	groups.POST("", a.AddGroupHandler)
+	// Registered before /:id so the literal path wins over the parameter.
+	groups.GET("/lookup", a.LookupGroupHandler)
 	groups.GET("/:id", a.GetGroupHandler)
 	groups.PUT("/:id", a.UpdateGroupHandler)
 	groups.DELETE("/:id", a.DeleteGroupHandler)
@@ -156,15 +209,15 @@ func (a *App) Router() *echo.Echo {
 	return a.router
 }
 
-// keycloakClientFromConfig builds a Keycloak client from configuration,
-// validating that the required settings are present.
-func keycloakClientFromConfig(config *koanf.Koanf) (keycloak.Client, error) {
-	cfg := keycloak.Config{
+// userinfoFromConfig builds the user-attribute client from configuration,
+// validating that the required settings are present. Keycloak no longer stores
+// groups; it is only the source of user names, emails, and institutions.
+func userinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
+	cfg := userinfo.Config{
 		BaseURL:      config.String("keycloak.base-url"),
 		Realm:        config.String("keycloak.realm"),
 		ClientID:     config.String("keycloak.client-id"),
 		ClientSecret: config.String("keycloak.client-secret"),
-		ParentGroup:  config.String("keycloak.parent-group"),
 	}
 
 	switch {
@@ -178,7 +231,7 @@ func keycloakClientFromConfig(config *koanf.Koanf) (keycloak.Client, error) {
 		return nil, fmt.Errorf("keycloak.client-secret must be set in the configuration")
 	}
 
-	return keycloak.NewClient(cfg), nil
+	return userinfo.NewKeycloakClient(cfg), nil
 }
 
 // errorHandler renders errors as a consistent JSON body.

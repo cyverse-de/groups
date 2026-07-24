@@ -1,19 +1,46 @@
 # groups
 
-A group management API for the CyVerse Discovery Environment, using Keycloak
-to store and manage groups. It is the intended replacement for `iplant-groups`
-(which is backed by Grouper).
+A group management API for the CyVerse Discovery Environment. It is the intended
+replacement for `iplant-groups` (which is backed by Grouper).
 
 ## Overview
 
-- Groups, group membership, and user (subject) lookups are served from a Keycloak
-  realm via the Keycloak Admin REST API.
-- Authorization (which users may manage which groups) is delegated to the DE
-  [`permissions`](https://github.com/cyverse-de/permissions) service, where each
-  group is a resource of type `group`. Any authenticated user may create a group
-  and becomes its owner.
+- Groups and membership live in the `permissions` schema of the DE database,
+  alongside the tables the [`permissions`](https://github.com/cyverse-de/permissions)
+  service owns. Co-locating them lets a permission lookup expand a user to their
+  groups with a join instead of a call to another service. The schema is defined
+  in [`de-database`](https://github.com/cyverse-de/de-database).
+- User attributes — names, email addresses, institutions — come from Keycloak,
+  read-only. A Keycloak outage degrades display data rather than authorization.
+- A group's identity is structured: a type (`collaborator_list`, `team`,
+  `community`, or `system`), an owning user for the types that have one, and a
+  short name, unique within that type and owner. Grouper's colon-delimited paths
+  are not reproduced.
+- Membership may nest: a group can be a member of another group. The transitive
+  expansion is materialized in `group_effective_members` and maintained on write,
+  so reads never recurse.
+- Authorization (which users may manage which groups) is delegated to the
+  `permissions` service, where each group is a resource of type `group`. Any
+  authenticated user may create a group in their own namespace and becomes its
+  owner.
 - Group create/update/delete events are published over AMQP for downstream
   re-indexing, matching the messages emitted by `iplant-groups`.
+
+## Table ownership
+
+The groups and permissions services share one schema until they are merged.
+Until then:
+
+| Tables | Written by | Read by |
+| --- | --- | --- |
+| `resource_types`, `resources`, `permissions`, `permission_levels` | permissions | both |
+| `group_types`, `groups`, `group_memberships`, `group_effective_members` | groups | both |
+| `subjects` rows of type `user` | permissions owns updates and deletes; groups inserts idempotently | both |
+| `subjects` rows of type `group` | groups | both |
+
+Groups owns group-typed subject rows outright because deleting a group must
+delete its subject row — that cascade is what removes permissions granted *to*
+the group.
 
 ## Build
 
@@ -44,25 +71,36 @@ Dockerfile, and CI all use the same version.
 
 ## Endpoints
 
-- `GET /` — service information and Keycloak connectivity (liveness/readiness probe).
+- `GET /` — service information and backend connectivity (liveness/readiness probe).
 - `GET /docs/` — Swagger UI for the API.
 
 Groups:
 
-- `GET /groups?search=` — search groups.
-- `POST /groups` — create a group (`{name, description, display_extension}`).
-- `GET /groups/:id` — get a group by UUID.
-- `PUT /groups/:id` — update a group.
+- `GET /groups?group_type=&owner=&member=&search=&limit=&offset=` — list groups.
+  `member` matches groups the user reaches through any depth of nesting.
+- `GET /groups/lookup?group_type=&owner=&name=` — resolve a structured identity
+  to a group.
+- `POST /groups` — create a group (`{group_type, owner, name, display_name, description}`).
+  `owner` defaults to the acting user, and only a trusted service account may set
+  it to someone else.
+- `GET /groups/:id` — get a group by ID.
+- `PUT /groups/:id` — update `{name, display_name, description}`. Type and owner
+  are immutable: they form the group's identity.
 - `DELETE /groups/:id` — delete a group.
 
-Membership:
+Membership. A member is a username, or another group's ID to nest it; nested
+members are reported with the `g:gsa` source ID, as Grouper did.
 
-- `GET /groups/:id/members` — list members.
+- `GET /groups/:id/members` — list direct members.
 - `PUT /groups/:id/members` — replace the full membership (`{members: [...]}`).
 - `POST /groups/:id/members` — bulk-add members.
 - `POST /groups/:id/members/deleter` — bulk-remove members.
 - `PUT /groups/:id/members/:subject` — add a single member.
 - `DELETE /groups/:id/members/:subject` — remove a single member.
+
+Bulk operations report a per-member outcome rather than failing the batch. A
+member that would create a membership cycle is rejected; adding a group to a
+group that already contains it returns a conflict.
 
 Permissions:
 
@@ -75,7 +113,8 @@ Subjects:
 - `GET /subjects?search=` — search subjects.
 - `POST /subjects/lookup` — look up multiple subjects by ID (`{subject_ids: [...]}`).
 - `GET /subjects/:subject-id` — get a subject.
-- `GET /subjects/:subject-id/groups` — list the groups a subject belongs to.
+- `GET /subjects/:subject-id/groups?group_type=` — list the groups a subject
+  belongs to, including those reached through nesting.
 
 ## Events
 
