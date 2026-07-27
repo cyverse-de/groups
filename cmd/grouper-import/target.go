@@ -185,16 +185,22 @@ func (t *target) BackfillUserIDs(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
-// UncorrelatedUsers counts imported user subjects with no DE user row: members
-// who never became DE users. A data-quality signal, never a gate.
-func (t *target) UncorrelatedUsers(ctx context.Context) (int, error) {
-	var n int
-	err := t.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM subjects WHERE subject_type = 'user' AND user_id IS NULL`).Scan(&n)
+// CorrelationCounts returns how many user subjects are correlated with a DE user
+// and how many are not. The uncorrelated ones are members who never became DE
+// users -- a data-quality signal, never a gate.
+//
+// Reported alongside the backfill count because most subjects are correlated
+// when they are created, not by the backfill: the backfill only picks up rows
+// that already existed, so its count alone reads as far lower than the truth.
+func (t *target) CorrelationCounts(ctx context.Context) (correlated, uncorrelated int, err error) {
+	err = t.db.QueryRowContext(ctx, `
+		SELECT count(*) FILTER (WHERE user_id IS NOT NULL),
+		       count(*) FILTER (WHERE user_id IS NULL)
+		  FROM subjects WHERE subject_type = 'user'`).Scan(&correlated, &uncorrelated)
 	if err != nil {
-		return 0, fmt.Errorf("could not count uncorrelated subjects: %w", err)
+		return 0, 0, fmt.Errorf("could not count subject correlation: %w", err)
 	}
-	return n, nil
+	return correlated, uncorrelated, nil
 }
 
 // GrantCounts returns the number of permissions held on each group resource, so

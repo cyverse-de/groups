@@ -39,8 +39,9 @@ type report struct {
 	MemberFailures            []string
 	PrivilegesDropped         map[string]int
 
-	UsersCorrelated   int64
-	UsersUncorrelated int
+	UsersCorrelated      int64
+	UsersCorrelatedTotal int
+	UsersUncorrelated    int
 
 	ClosureExpected int
 	ClosureMissing  int
@@ -58,8 +59,8 @@ func (r *report) Print() {
 		r.GroupsCreated, r.GroupsUpdated, r.GroupsUnchanged)
 	logf("membership: %d added, %d removed", r.MembersAdded, r.MembersRemoved)
 	logf("grants: %d added, %d removed", r.GrantsAdded, r.GrantsRemoved)
-	logf("DE users correlated: %d newly, %d subjects still uncorrelated",
-		r.UsersCorrelated, r.UsersUncorrelated)
+	logf("DE users: %d subjects correlated (%d by this backfill), %d uncorrelated",
+		r.UsersCorrelatedTotal, r.UsersCorrelated, r.UsersUncorrelated)
 
 	logf("effective membership vs Grouper: %d expected, %d missing, %d unexpected",
 		r.ClosureExpected, r.ClosureMissing, r.ClosureExtra)
@@ -372,16 +373,17 @@ func importMembership(ctx context.Context, cfg *config, source *grouperSource, t
 		}
 	}
 
-	correlated, err := tgt.BackfillUserIDs(ctx)
+	backfilled, err := tgt.BackfillUserIDs(ctx)
 	if err != nil {
 		return err
 	}
-	rep.UsersCorrelated = correlated
+	rep.UsersCorrelated = backfilled
 
-	uncorrelated, err := tgt.UncorrelatedUsers(ctx)
+	correlated, uncorrelated, err := tgt.CorrelationCounts(ctx)
 	if err != nil {
 		return err
 	}
+	rep.UsersCorrelatedTotal = correlated
 	rep.UsersUncorrelated = uncorrelated
 
 	return verifyClosure(ctx, source, tgt, parsedGroups, rep)
