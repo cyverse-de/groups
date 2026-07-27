@@ -34,13 +34,22 @@ var (
 // Store is the PostgreSQL implementation of store.Store.
 type Store struct {
 	*reader
-	db *sql.DB
+	db         *sql.DB
+	userSuffix string
 }
+
+// DefaultUserSuffix is the domain appended to a bare username to form the
+// public.users.username of the corresponding DE user.
+const DefaultUserSuffix = "@iplantcollaborative.org"
 
 // Config carries the settings needed to open the store.
 type Config struct {
 	URI    string
 	Schema string
+
+	// UserSuffix forms a DE username from a bare one when correlating a new
+	// subject with its public.users row. Defaults to DefaultUserSuffix.
+	UserSuffix string
 
 	MaxOpenConns    int
 	MaxIdleConns    int
@@ -56,6 +65,9 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	}
 	if cfg.Schema == "" {
 		cfg.Schema = "permissions"
+	}
+	if cfg.UserSuffix == "" {
+		cfg.UserSuffix = DefaultUserSuffix
 	}
 
 	dsn, err := dsnWithSearchPath(cfg.URI, cfg.Schema)
@@ -79,7 +91,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("could not reach the database; check db.uri and that the service can route to it: %w", err)
 	}
 
-	return &Store{reader: &reader{q: db}, db: db}, nil
+	return &Store{reader: &reader{q: db}, db: db, userSuffix: cfg.UserSuffix}, nil
 }
 
 func orDefault(v, def int) int {
@@ -137,7 +149,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(store.Tx) error) error {
 		}
 	}()
 
-	if err := fn(&tx{reader: &reader{q: sqlTx}, tx: sqlTx}); err != nil {
+	if err := fn(&tx{reader: &reader{q: sqlTx}, tx: sqlTx, userSuffix: s.userSuffix}); err != nil {
 		return err
 	}
 
@@ -163,7 +175,8 @@ type reader struct{ q querier }
 // tx implements the read-write half.
 type tx struct {
 	*reader
-	tx *sql.Tx
+	tx         *sql.Tx
+	userSuffix string
 }
 
 // translateErr converts a driver error into a store error where there is a

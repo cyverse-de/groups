@@ -564,3 +564,41 @@ func TestAddMemberRejectsWhitespaceIdentifier(t *testing.T) {
 		`SELECT count(*) FROM subjects WHERE subject_id = 'test-cencas '`).Scan(&leaked))
 	assert.Zero(t, leaked, "the rejected identifier must not reach the subjects table")
 }
+
+// TestEnsureUserSubjectCorrelatesDEUser covers populating subjects.user_id when
+// a membership creates a subject row. The correlation is best-effort: a user who
+// has never logged in to the DE has no users row, and must still become a member.
+func TestEnsureUserSubjectCorrelatesDEUser(t *testing.T) {
+	s := testStore(t)
+
+	var deUserID string
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`INSERT INTO public.users (username) VALUES ('test-known' || $1)
+		 ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+		 RETURNING id`, DefaultUserSuffix).Scan(&deUserID))
+	t.Cleanup(func() {
+		_, err := s.db.ExecContext(context.Background(),
+			`DELETE FROM public.users WHERE username LIKE 'test-%'`)
+		assert.NoError(t, err)
+	})
+
+	g := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-owner", Name: "correlation",
+	})
+	changes := mustAddMembers(t, s, g.ID, "test-known", "test-nologin")
+	for _, c := range changes {
+		require.NoError(t, c.Err)
+	}
+
+	userIDFor := func(subjectID string) *string {
+		var id *string
+		require.NoError(t, s.db.QueryRowContext(t.Context(),
+			`SELECT user_id::text FROM subjects WHERE subject_id = $1`, subjectID).Scan(&id))
+		return id
+	}
+
+	require.NotNil(t, userIDFor("test-known"), "a member with a DE user must be correlated")
+	assert.Equal(t, deUserID, *userIDFor("test-known"))
+	assert.Nil(t, userIDFor("test-nologin"),
+		"a member who has never logged in must still be added, uncorrelated")
+}

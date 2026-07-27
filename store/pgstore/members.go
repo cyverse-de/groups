@@ -304,12 +304,21 @@ func (t *tx) resolveMember(ctx context.Context, groupInternalID, subjectID strin
 // ensureUserSubject inserts a user subject row idempotently. DO UPDATE rather
 // than DO NOTHING so RETURNING yields a row when another transaction inserted
 // the same subject first; the assignment deliberately changes nothing.
+//
+// user_id correlates the subject with its DE user. It stays NULL when the user
+// has never logged in to the DE, which must not block the membership -- and the
+// NOT EXISTS guard keeps a second subject from claiming a user already spoken
+// for, which subjects_user_id_unique would otherwise reject outright.
 func (t *tx) ensureUserSubject(ctx context.Context, subjectID string) (string, string, error) {
 	var internalID, subjectType string
 	err := t.tx.QueryRowContext(ctx, `
-		INSERT INTO subjects (subject_id, subject_type) VALUES ($1, 'user')
+		INSERT INTO subjects (subject_id, subject_type, user_id)
+		VALUES ($1::text, 'user', (
+			SELECT u.id FROM public.users u
+			 WHERE u.username = $1::text || $2::text
+			   AND NOT EXISTS (SELECT 1 FROM subjects o WHERE o.user_id = u.id)))
 		ON CONFLICT (subject_id) DO UPDATE SET subject_type = subjects.subject_type
-		RETURNING id, subject_type`, subjectID).Scan(&internalID, &subjectType)
+		RETURNING id, subject_type`, subjectID, t.userSuffix).Scan(&internalID, &subjectType)
 	if err != nil {
 		return "", "", translateErr(err)
 	}

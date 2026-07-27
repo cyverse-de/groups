@@ -11,6 +11,12 @@ db:
   uri: postgresql://de:notprod@dedb:5432/de?sslmode=disable
   schema: permissions
 
+# Domain appended to a bare username to form the public.users.username of the
+# corresponding DE user, used to correlate a new subject with its DE user row.
+# Leave unset to use the default (@iplantcollaborative.org).
+users:
+  suffix: "@iplantcollaborative.org"
+
 # Keycloak connection settings. The service authenticates as a confidential
 # client using the client-credentials grant. Keycloak is only the source of user
 # attributes -- names, email addresses, and institutions -- so the service

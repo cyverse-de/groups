@@ -106,8 +106,9 @@ func storeFromConfig(ctx context.Context, config *koanf.Koanf) (store.Store, err
 		return nil, fmt.Errorf("db.uri must be set in the configuration")
 	}
 	return pgstore.Open(ctx, pgstore.Config{
-		URI:    uri,
-		Schema: config.String("db.schema"),
+		URI:        uri,
+		Schema:     config.String("db.schema"),
+		UserSuffix: config.String("users.suffix"),
 	})
 }
 

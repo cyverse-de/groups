@@ -39,11 +39,27 @@ Until then:
 | `resource_types`, `resources`, `permissions`, `permission_levels` | permissions | both |
 | `group_types`, `groups`, `group_memberships`, `group_effective_members` | groups | both |
 | `subjects` rows of type `user` | permissions owns updates and deletes; groups inserts idempotently | both |
+| `subjects.user_id` | groups populates on insert; the Grouper importer backfills | both |
 | `subjects` rows of type `group` | groups | both |
 
 Groups owns group-typed subject rows outright because deleting a group must
 delete its subject row — that cascade is what removes permissions granted *to*
 the group.
+
+### Correlating subjects with DE users
+
+`subjects.subject_id` is a bare username while `public.users.username` carries a
+domain suffix, so `subjects.user_id` records the DE user a subject corresponds to
+and saves every consumer from reconstructing the suffixed form. It is populated
+when this service creates a subject row, using `users.suffix` from the
+configuration.
+
+The column is **best-effort and nullable**. A subject can be created before the
+user has ever logged in to the DE, and some subjects correspond to no DE user at
+all. A `NULL` means "not correlated", never "no such user" — treating it as the
+latter will silently drop real members. Note also that the permissions service
+creates subject rows of its own and does not populate the column, so it is a
+lookup shortcut rather than a source of truth.
 
 ## Build
 
