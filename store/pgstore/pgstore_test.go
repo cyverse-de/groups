@@ -529,3 +529,38 @@ func TestExistingSubjects(t *testing.T) {
 		})
 	}
 }
+
+// TestAddMemberRejectsWhitespaceIdentifier proves the whitespace rule holds on
+// the path the Grouper importer uses -- writing through the store, which bypasses
+// the handler-level identity-provider check.
+func TestAddMemberRejectsWhitespaceIdentifier(t *testing.T) {
+	s := testStore(t)
+
+	g := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-owner", Name: "whitespace",
+	})
+
+	// The exact shape production Grouper holds.
+	changes := mustAddMembers(t, s, g.ID, "test-cencas ", "test-clean")
+	require.Len(t, changes, 2)
+
+	byID := map[string]model.MemberChange{}
+	for _, c := range changes {
+		byID[c.SubjectID] = c
+	}
+	require.Error(t, byID["test-cencas "].Err, "a trailing space must be rejected")
+	assert.NoError(t, byID["test-clean"].Err, "the rest of the batch must still apply")
+
+	members, err := s.ListMembers(t.Context(), g.ID)
+	require.NoError(t, err)
+	ids := make([]string, 0, len(members))
+	for _, m := range members {
+		ids = append(ids, m.ID)
+	}
+	assert.Equal(t, []string{"test-clean"}, ids, "no subject row may be created for it")
+
+	var leaked int
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM subjects WHERE subject_id = 'test-cencas '`).Scan(&leaked))
+	assert.Zero(t, leaked, "the rejected identifier must not reach the subjects table")
+}

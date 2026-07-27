@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/cyverse-de/groups/model"
 	"github.com/cyverse-de/groups/store"
@@ -63,6 +64,26 @@ func (r *reader) IsEffectiveMember(ctx context.Context, groupID, username string
 		return false, translateErr(err)
 	}
 	return found, nil
+}
+
+// validateSubjectID checks an identifier that may become a subjects row.
+//
+// Surrounding whitespace is rejected rather than trimmed. Subject matching is
+// exact, so `alice ` would become a second subject that no lookup could ever
+// reach -- production Grouper holds four such member usernames. Trimming
+// silently would instead make two different requests mean the same member,
+// which is a worse surprise than an error.
+func validateSubjectID(id string) error {
+	switch {
+	case id == "":
+		return fmt.Errorf("%w: the subject identifier is empty", errMember)
+	case strings.TrimSpace(id) != id:
+		return fmt.Errorf("%w: the subject identifier has leading or trailing whitespace", errMember)
+	case len(id) > maxSubjectIDLength:
+		return fmt.Errorf("%w: the subject identifier is longer than %d characters",
+			errMember, maxSubjectIDLength)
+	}
+	return nil
 }
 
 // ExistingSubjects returns the subset of ids that already have a subject row.
@@ -237,12 +258,8 @@ func (t *tx) ReplaceMembers(ctx context.Context, groupID string, subjectIDs []st
 // store. An identifier naming an existing group becomes a nested group member;
 // anything else is treated as a username and given a subject row if it has none.
 func (t *tx) resolveMember(ctx context.Context, groupInternalID, subjectID string) (string, string, error) {
-	if subjectID == "" {
-		return "", "", fmt.Errorf("%w: the subject identifier is empty", errMember)
-	}
-	if len(subjectID) > maxSubjectIDLength {
-		return "", "", fmt.Errorf("%w: the subject identifier is longer than %d characters",
-			errMember, maxSubjectIDLength)
+	if err := validateSubjectID(subjectID); err != nil {
+		return "", "", err
 	}
 
 	var (
