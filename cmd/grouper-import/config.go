@@ -80,3 +80,13 @@ func (c *config) validate() error {
 
 	return errors.Join(errs...)
 }
+
+// runsGroups reports whether this run imports group and membership data.
+func (c *config) runsGroups() bool {
+	return c.Phase == phaseGroups || c.Phase == phaseAll
+}
+
+// runsPermissions reports whether this run imports privilege grants.
+func (c *config) runsPermissions() bool {
+	return c.Phase == phasePermissions || c.Phase == phaseAll
+}

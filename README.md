@@ -61,6 +61,54 @@ latter will silently drop real members. Note also that the permissions service
 creates subject rows of its own and does not populate the column, so it is a
 lookup shortcut rather than a source of truth.
 
+## Importing from Grouper
+
+`cmd/grouper-import` copies DE group data out of Grouper. It is a standalone
+command rather than a migration: it reads a database that does not exist in every
+environment, and keeping it out of the migration chain means a rollback removes
+structure without destroying group data while Grouper is still the recoverable
+source of truth.
+
+```bash
+go run ./cmd/grouper-import \
+  -grouper-uri "postgres://GrouperSystem@grouper-db/grouper" \
+  -grouper-prefix iplant:de:prod \
+  -db-uri "postgres://de@de-db/de" \
+  -permissions-base http://permissions \
+  -phase all -dry-run
+```
+
+Credentials may be supplied as `GROUPS_IMPORT_*` environment variables instead of
+flags, so they need not appear in a command line that `ps` can read.
+
+The import is **convergent, not merely idempotent**. It is expected to run many
+times while Grouper is still taking writes, so membership and grants are
+reconciled to Grouper's current state — including removals — rather than
+accumulated. Notable consequences:
+
+- **It never deletes groups.** A group that disappears from Grouper is reported,
+  not removed: deleting one cascades away its subject row and with it every
+  permission granted to the group.
+- **It refuses to run once Grouper is no longer authoritative.** `RequireGrouperAuthoritative`
+  checks `group_data_source`, and there is no override flag — after cutover, a
+  reconcile would delete whatever had been created natively. Setting the marker
+  back to `grouper` is the deliberate, attributed act that re-enables it.
+- **It takes an advisory lock**, so two runs cannot interleave.
+- **`-grouper-prefix` is required.** A wider scope pulls in another environment's
+  `de-users`, which collides with this one on `(group_type, owner, name)`.
+- **An unparsable name aborts the run.** Every lazy handling of an unknown name
+  produces a clean-looking run with groups silently missing.
+- Membership is written through this service's own store, so identifier
+  validation, DE-user correlation, and closure maintenance have one
+  implementation. The Keycloak check does not apply: Grouper is the source of
+  truth for the import, and rejecting a member the directory has forgotten would
+  silently shrink membership.
+
+Every run prints created / updated / unchanged / added / removed counts, so a
+no-op run is visibly a no-op rather than indistinguishable from one that crashed
+early. It also verifies the effective-membership closure against Grouper's own
+expansion, per group — the strongest check available on the nesting logic.
+
 ## Build
 
 ```bash

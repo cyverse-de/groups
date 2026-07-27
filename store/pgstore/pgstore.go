@@ -70,7 +70,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		cfg.UserSuffix = DefaultUserSuffix
 	}
 
-	dsn, err := dsnWithSearchPath(cfg.URI, cfg.Schema)
+	dsn, err := DSNWithSearchPath(cfg.URI, cfg.Schema)
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +101,13 @@ func orDefault(v, def int) int {
 	return v
 }
 
-// dsnWithSearchPath adds search_path to the connection string unless the caller
+// DSNWithSearchPath adds search_path to the connection string unless the caller
 // already set one. lib/pq forwards unrecognized parameters to the server as
 // runtime settings, so this reaches every connection in the pool.
-func dsnWithSearchPath(uri, schema string) (string, error) {
+//
+// Exported so that tools opening their own pool against the same schema -- the
+// Grouper importer -- resolve it identically.
+func DSNWithSearchPath(uri, schema string) (string, error) {
 	// Keyword/value connection strings are passed through untouched: they have
 	// their own syntax, and a caller using one can set search_path themselves.
 	if !strings.HasPrefix(uri, "postgres://") && !strings.HasPrefix(uri, "postgresql://") {

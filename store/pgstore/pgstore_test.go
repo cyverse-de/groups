@@ -442,7 +442,7 @@ func TestDSNWithSearchPath(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := dsnWithSearchPath(tc.uri, tc.schema)
+			got, err := DSNWithSearchPath(tc.uri, tc.schema)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})

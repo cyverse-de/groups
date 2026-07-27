@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -33,13 +34,19 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Fprintf(os.Stderr, "grouper-import: phase=%s prefix=%s dry-run=%t\n",
-		cfg.Phase, cfg.Prefix, cfg.DryRun)
+	logf("phase=%s prefix=%s dry-run=%t", cfg.Phase, cfg.Prefix, cfg.DryRun)
 
-	// The import itself is added phase by phase; the parser and configuration
-	// are in place and covered by tests.
-	fmt.Fprintln(os.Stderr, "grouper-import: no phase is implemented yet")
-	os.Exit(1)
+	rep, err := run(context.Background(), cfg)
+	if rep != nil {
+		rep.Print()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "grouper-import: %s\n", err)
+		os.Exit(1)
+	}
+	if cfg.DryRun {
+		logf("dry run: nothing was written")
+	}
 }
 
 // configFromArgs builds and validates the configuration from flags, falling back
