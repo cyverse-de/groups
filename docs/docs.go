@@ -384,6 +384,15 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "502": {
+                        "description": "The identity provider could not be reached to verify new members",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             },
@@ -418,6 +427,15 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/main.membersResults"
+                        }
+                    },
+                    "502": {
+                        "description": "The identity provider could not be reached to verify new members",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -483,8 +501,26 @@ const docTemplate = `{
                     "200": {
                         "description": "OK"
                     },
+                    "400": {
+                        "description": "No such user in the identity provider",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "The identity provider could not be reached",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

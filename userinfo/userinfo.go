@@ -1,7 +1,8 @@
 // Package userinfo looks up the user attributes the groups service reports:
 // name, email, and institution. Users stay in the identity provider even though
 // groups and membership live in the DE database, so a directory outage degrades
-// display data rather than authorization.
+// display data rather than authorization -- except when adding a member with no
+// subject row, where this package also verifies that the username exists.
 package userinfo
 
 import (

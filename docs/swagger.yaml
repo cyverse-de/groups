@@ -367,6 +367,12 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/main.membersResults'
+        "502":
+          description: The identity provider could not be reached to verify new members
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Add members to a group
     put:
       consumes:
@@ -392,6 +398,12 @@ paths:
             $ref: '#/definitions/main.membersResults'
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: The identity provider could not be reached to verify new members
           schema:
             additionalProperties:
               type: string
@@ -435,8 +447,20 @@ paths:
       responses:
         "200":
           description: OK
+        "400":
+          description: No such user in the identity provider
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: The identity provider could not be reached
           schema:
             additionalProperties:
               type: string

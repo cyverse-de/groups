@@ -8,6 +8,7 @@ import (
 
 	"github.com/cyverse-de/groups/model"
 	"github.com/cyverse-de/groups/store"
+	"github.com/lib/pq"
 )
 
 // maxSubjectIDLength matches subjects.subject_id in the permissions schema.
@@ -62,6 +63,33 @@ func (r *reader) IsEffectiveMember(ctx context.Context, groupID, username string
 		return false, translateErr(err)
 	}
 	return found, nil
+}
+
+// ExistingSubjects returns the subset of ids that already have a subject row.
+// The identifiers it does not return are the ones a membership change would mint
+// a subject for, which is where user validation applies.
+func (r *reader) ExistingSubjects(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.q.QueryContext(ctx,
+		`SELECT subject_id FROM subjects WHERE subject_id = ANY($1)`, pq.Array(ids))
+	if err != nil {
+		return nil, translateErr(err)
+	}
+	// Close reports the same failure rows.Err() does, which is checked below.
+	defer func() { _ = rows.Close() }()
+
+	existing := make([]string, 0, len(ids))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, translateErr(err)
+		}
+		existing = append(existing, id)
+	}
+	return existing, translateErr(rows.Err())
 }
 
 // internalGroupID resolves an external group identifier to the internal subject

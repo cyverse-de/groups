@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/cyverse-de/groups/model"
@@ -127,6 +128,7 @@ func (a *App) groupSubject(ctx context.Context, groupID string) model.Subject {
 //	@Param	id	path	string	true	"Group identifier"
 //	@Param	body	body	membersRequest	true	"Usernames or group identifiers to add"
 //	@Success	200	{object}	membersResults
+//	@Failure	502	{object}	map[string]string	"The identity provider could not be reached to verify new members"
 //	@Router	/groups/{id}/members [post]
 func (a *App) AddMembersHandler(c echo.Context) error {
 	groupID := c.Param("id")
@@ -139,9 +141,14 @@ func (a *App) AddMembersHandler(c echo.Context) error {
 		return err
 	}
 
+	accepted, rejected, err := a.validateNewUsers(c.Request().Context(), req.Members)
+	if err != nil {
+		return err
+	}
+
 	user := actingUser(c)
-	return a.applyMembership(c, groupID, func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error) {
-		return tx.AddMembers(ctx, groupID, req.Members, user)
+	return a.applyMembership(c, groupID, rejected, func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error) {
+		return tx.AddMembers(ctx, groupID, accepted, user)
 	})
 }
 
@@ -165,7 +172,9 @@ func (a *App) RemoveMembersHandler(c echo.Context) error {
 		return err
 	}
 
-	return a.applyMembership(c, groupID, func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error) {
+	// Removal is deliberately not validated: a user who has left the identity
+	// provider must still be removable from a group.
+	return a.applyMembership(c, groupID, nil, func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error) {
 		return tx.RemoveMembers(ctx, groupID, req.Members)
 	})
 }
@@ -180,6 +189,7 @@ func (a *App) RemoveMembersHandler(c echo.Context) error {
 //	@Param	body	body	membersRequest	true	"The complete desired membership"
 //	@Success	200	{object}	membersResults
 //	@Failure	404	{object}	map[string]string
+//	@Failure	502	{object}	map[string]string	"The identity provider could not be reached to verify new members"
 //	@Router	/groups/{id}/members [put]
 func (a *App) ReplaceMembersHandler(c echo.Context) error {
 	groupID := c.Param("id")
@@ -192,9 +202,14 @@ func (a *App) ReplaceMembersHandler(c echo.Context) error {
 		return err
 	}
 
+	accepted, rejected, err := a.validateNewUsers(c.Request().Context(), req.Members)
+	if err != nil {
+		return err
+	}
+
 	user := actingUser(c)
-	return a.applyMembership(c, groupID, func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error) {
-		return tx.ReplaceMembers(ctx, groupID, req.Members, user)
+	return a.applyMembership(c, groupID, rejected, func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error) {
+		return tx.ReplaceMembers(ctx, groupID, accepted, user)
 	})
 }
 
@@ -204,7 +219,9 @@ func (a *App) ReplaceMembersHandler(c echo.Context) error {
 //	@Param	id	path	string	true	"Group identifier"
 //	@Param	subject	path	string	true	"Username or group identifier"
 //	@Success	200
+//	@Failure	400	{object}	map[string]string	"No such user in the identity provider"
 //	@Failure	404	{object}	map[string]string
+//	@Failure	502	{object}	map[string]string	"The identity provider could not be reached"
 //	@Router	/groups/{id}/members/{subject} [put]
 func (a *App) AddMemberHandler(c echo.Context) error {
 	groupID := c.Param("id")
@@ -213,10 +230,18 @@ func (a *App) AddMemberHandler(c echo.Context) error {
 	}
 
 	subject := c.Param("subject")
+	accepted, rejected, err := a.validateNewUsers(c.Request().Context(), []string{subject})
+	if err != nil {
+		return err
+	}
+	if len(rejected) > 0 {
+		return storeError(rejected[0].Err)
+	}
+
 	user := actingUser(c)
 	return a.applySingleMembership(c, groupID, subject,
 		func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error) {
-			return tx.AddMembers(ctx, groupID, []string{subject}, user)
+			return tx.AddMembers(ctx, groupID, accepted, user)
 		})
 }
 
@@ -242,19 +267,77 @@ func (a *App) RemoveMemberHandler(c echo.Context) error {
 		})
 }
 
+// errUnknownUser reports a username that the identity provider does not know.
+var errUnknownUser = errors.New("no such user in the identity provider")
+
+// validateNewUsers splits a requested membership into the members that may be
+// written and the ones rejected because they would create a subject row for a
+// username the identity provider does not know.
+//
+// Only identifiers without a subject row are checked. An identifier that already
+// has one is either a group, or a user vetted when their row was created, or a
+// user imported from Grouper who may since have left the directory -- none of
+// which should be re-litigated by a membership change.
+//
+// A directory failure fails the request. Creating subject rows that cannot be
+// verified is the outcome this validation exists to prevent, so it cannot fall
+// back to allowing them.
+func (a *App) validateNewUsers(ctx context.Context, ids []string) (accepted []string, rejected []model.MemberChange, err error) {
+	existing, err := a.store.ExistingSubjects(ctx, ids)
+	if err != nil {
+		return nil, nil, storeError(err)
+	}
+	known := make(map[string]struct{}, len(existing))
+	for _, id := range existing {
+		known[id] = struct{}{}
+	}
+
+	unverified := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := known[id]; !ok {
+			unverified = append(unverified, id)
+		}
+	}
+
+	if len(unverified) > 0 {
+		subjects, err := a.userinfo.GetMany(ctx, unverified)
+		if err != nil {
+			log.WithField("context", "membership").
+				Errorf("could not verify new members against the identity provider; "+
+					"refusing to create subject rows that cannot be verified: %s", err)
+			return nil, nil, echo.NewHTTPError(http.StatusBadGateway,
+				"could not verify the members against the identity provider")
+		}
+		for _, s := range subjects {
+			known[s.ID] = struct{}{}
+		}
+	}
+
+	accepted = make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := known[id]; ok {
+			accepted = append(accepted, id)
+			continue
+		}
+		rejected = append(rejected, model.MemberChange{SubjectID: id, Err: errUnknownUser})
+	}
+	return accepted, rejected, nil
+}
+
 // membershipOp is a membership change to run inside a transaction.
 type membershipOp func(ctx context.Context, tx store.Tx) ([]model.MemberChange, error)
 
 // applyMembership runs a bulk membership change and renders the per-member
-// results. The change event is published after the commit, so a rolled-back
-// transaction cannot announce a change that did not happen.
-func (a *App) applyMembership(c echo.Context, groupID string, op membershipOp) error {
+// results, reporting members rejected before the transaction alongside the ones
+// the store acted on. The change event is published after the commit, so a
+// rolled-back transaction cannot announce a change that did not happen.
+func (a *App) applyMembership(c echo.Context, groupID string, rejected []model.MemberChange, op membershipOp) error {
 	ctx := c.Request().Context()
 
-	var changes []model.MemberChange
+	var applied []model.MemberChange
 	err := a.store.WithTx(ctx, func(tx store.Tx) error {
 		var err error
-		changes, err = op(ctx, tx)
+		applied, err = op(ctx, tx)
 		return err
 	})
 	if err != nil {
@@ -262,6 +345,10 @@ func (a *App) applyMembership(c echo.Context, groupID string, op membershipOp) e
 	}
 
 	a.publishGroupChanged(c, groupID)
+
+	changes := make([]model.MemberChange, 0, len(rejected)+len(applied))
+	changes = append(changes, rejected...)
+	changes = append(changes, applied...)
 	return c.JSON(http.StatusOK, &membersResults{Results: a.renderResults(ctx, changes)})
 }
 

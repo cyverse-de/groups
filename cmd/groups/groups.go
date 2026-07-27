@@ -49,7 +49,9 @@ func storeError(err error) error {
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrCycle):
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
-	case errors.Is(err, store.ErrOwnerRequired):
+	case errors.Is(err, store.ErrOwnerRequired), errors.Is(err, errUnknownUser):
+		// errUnknownUser is not a 404: the group was found, and it is the named
+		// member that does not exist. A 404 here would read as "no such group".
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	default:
 		return err

@@ -484,3 +484,48 @@ func TestClosureMatchesRecomputation(t *testing.T) {
 	assert.Zero(t, missing, "the closure is missing rows the membership graph implies")
 	assert.Zero(t, stale, "the closure grants membership the graph no longer justifies")
 }
+
+// TestExistingSubjects covers the query that decides which members need
+// validating against the identity provider: anything it does not return would
+// cause a new subject row to be created.
+func TestExistingSubjects(t *testing.T) {
+	s := testStore(t)
+
+	g := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-owner", Name: "existing-subjects",
+	})
+	mustAddMembers(t, s, g.ID, "test-alice")
+
+	tests := []struct {
+		name string
+		ids  []string
+		want []string
+	}{
+		{name: "no identifiers", ids: nil, want: nil},
+		{name: "a user with a subject row", ids: []string{"test-alice"}, want: []string{"test-alice"}},
+		{name: "a user without one", ids: []string{"test-nobody"}, want: nil},
+		{
+			name: "a group is an existing subject",
+			ids:  []string{g.ID},
+			want: []string{g.ID},
+		},
+		{
+			name: "reports only the known ones from a mixed set",
+			ids:  []string{"test-alice", "test-nobody", g.ID},
+			want: []string{"test-alice", g.ID},
+		},
+		{
+			name: "matching is case-sensitive",
+			ids:  []string{"TEST-ALICE"},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.ExistingSubjects(t.Context(), tt.ids)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.want, got)
+		})
+	}
+}

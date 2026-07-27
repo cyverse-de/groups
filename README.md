@@ -11,7 +11,10 @@ replacement for `iplant-groups` (which is backed by Grouper).
   groups with a join instead of a call to another service. The schema is defined
   in [`de-database`](https://github.com/cyverse-de/de-database).
 - User attributes — names, email addresses, institutions — come from Keycloak,
-  read-only. A Keycloak outage degrades display data rather than authorization.
+  read-only. A Keycloak outage degrades display data rather than authorization,
+  with one deliberate exception: adding a member who has no subject row yet
+  requires Keycloak, because that is where the username is verified. See
+  [Member validation](#member-validation).
 - A group's identity is structured: a type (`collaborator_list`, `team`,
   `community`, or `system`), an owning user for the types that have one, and a
   short name, unique within that type and owner. Grouper's colon-delimited paths
@@ -101,6 +104,25 @@ members are reported with the `g:gsa` source ID, as Grouper did.
 Bulk operations report a per-member outcome rather than failing the batch. A
 member that would create a membership cycle is rejected; adding a group to a
 group that already contains it returns a conflict.
+
+### Member validation
+
+Adding a member whose identifier has no `subjects` row would create one. Because
+nothing else constrains that identifier, a typo would otherwise become a
+permanent subject row and a member who is nobody, with no error. So before
+creating a subject row, the service verifies the username in Keycloak:
+
+- Identifiers that already have a subject row are **not** re-validated. They are
+  either groups, users vetted when their row was created, or users imported from
+  Grouper who may since have left the directory — none of which should block a
+  membership change.
+- An identifier Keycloak does not resolve is reported as a failed member in bulk
+  operations, and returns 400 on `PUT /groups/:id/members/:subject`.
+- **Removal is never validated**, so a user who has left the directory can still
+  be removed from a group.
+- If Keycloak cannot be reached, the add fails with 502 rather than creating
+  unverifiable subject rows. This is the one place a directory outage blocks a
+  write.
 
 Permissions:
 

@@ -60,6 +60,11 @@ type Reader interface {
 	// GroupsForSubject returns the groups a user belongs to, through any depth of
 	// nesting. An empty groupType returns every type.
 	GroupsForSubject(ctx context.Context, username, groupType string) ([]model.Group, error)
+
+	// ExistingSubjects returns the subset of the given identifiers that already
+	// have a subject row, in unspecified order. Callers use it to find the
+	// identifiers that would cause a new subject to be created.
+	ExistingSubjects(ctx context.Context, ids []string) ([]string, error)
 }
 
 // Tx is a read-write transaction. Every mutation lives here so that a caller

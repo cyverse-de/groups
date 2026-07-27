@@ -23,6 +23,7 @@ type mockStore struct {
 	listMembersFn       func(ctx context.Context, groupID string) ([]model.MemberRef, error)
 	isEffectiveMemberFn func(ctx context.Context, groupID, username string) (bool, error)
 	groupsForSubjectFn  func(ctx context.Context, username, groupType string) ([]model.Group, error)
+	existingSubjectsFn  func(ctx context.Context, ids []string) ([]string, error)
 
 	createGroupFn    func(ctx context.Context, spec model.GroupSpec) (*model.Group, error)
 	updateGroupFn    func(ctx context.Context, id string, upd model.GroupUpdate) (*model.Group, error)
@@ -101,6 +102,15 @@ func (m *mockStore) GroupsForSubject(ctx context.Context, username, groupType st
 		return m.groupsForSubjectFn(ctx, username, groupType)
 	}
 	return []model.Group{}, nil
+}
+
+func (m *mockStore) ExistingSubjects(ctx context.Context, ids []string) ([]string, error) {
+	if m.existingSubjectsFn != nil {
+		return m.existingSubjectsFn(ctx, ids)
+	}
+	// Treat every identifier as already known, so tests that are not about
+	// validation are unaffected by it.
+	return ids, nil
 }
 
 func (m *mockStore) CreateGroup(ctx context.Context, spec model.GroupSpec) (*model.Group, error) {
