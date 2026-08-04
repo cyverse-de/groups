@@ -35,6 +35,7 @@ type report struct {
 	NamesTrimmed              []string
 	MembersTrimmed            []string
 	GroupsGoneFromGrouper     []string
+	GroupsCreatedNatively     []string
 	GroupsSkippedForCollision []string
 	MemberFailures            []string
 	PrivilegesDropped         map[string]int
@@ -68,6 +69,7 @@ func (r *report) Print() {
 	printList("group names trimmed", r.NamesTrimmed)
 	printList("member identifiers trimmed", r.MembersTrimmed)
 	printList("groups in the database but no longer in Grouper (NOT deleted)", r.GroupsGoneFromGrouper)
+	printList("groups created natively, never in Grouper (expected during the soak)", r.GroupsCreatedNatively)
 	printList("groups skipped as empty duplicates of a colliding identity", r.GroupsSkippedForCollision)
 	printList("members rejected", r.MemberFailures)
 
@@ -212,13 +214,11 @@ func importGroups(ctx context.Context, cfg *config, source *grouperSource, tgt *
 	if err != nil {
 		return nil, err
 	}
-	for id, g := range existing {
-		if !slicesContainsGroup(parsedGroups, id) {
-			rep.GroupsGoneFromGrouper = append(rep.GroupsGoneFromGrouper,
-				fmt.Sprintf("%s (%s/%s)", id, g.GroupType, g.Name))
-		}
+	inGrouper := make(map[string]bool, len(parsedGroups))
+	for _, pg := range parsedGroups {
+		inGrouper[pg.grouper.ID] = true
 	}
-	sort.Strings(rep.GroupsGoneFromGrouper)
+	rep.GroupsGoneFromGrouper, rep.GroupsCreatedNatively = classifyAbsentGroups(existing, inGrouper)
 
 	if cfg.DryRun {
 		logf("dry run: %d groups would be written", len(parsedGroups))
@@ -446,15 +446,6 @@ func verifyClosure(ctx context.Context, source *grouperSource, tgt *target,
 	rep.ClosureMissing = missing
 	rep.ClosureExtra = extra
 	return nil
-}
-
-func slicesContainsGroup(groups []parsedGroup, id string) bool {
-	for _, pg := range groups {
-		if pg.grouper.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 func closeQuietly(what string, c interface{ Close() error }) {
