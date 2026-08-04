@@ -25,11 +25,16 @@ RUN go build -ldflags="-w -s" --buildvcs=false -o groups ./cmd/groups
 # overrides the command.
 RUN go build -ldflags="-w -s" --buildvcs=false -o grouper-import ./cmd/grouper-import
 
+# The community-tag migration ships alongside it, for the same reason: it runs
+# once as a Job and needs the same database configuration.
+RUN go build -ldflags="-w -s" --buildvcs=false -o community-tags ./cmd/community-tags
+
 # Runtime stage - distroless static image.
 FROM gcr.io/distroless/static-debian13:nonroot
 
 COPY --from=builder /build/groups /bin/groups
 COPY --from=builder /build/grouper-import /bin/grouper-import
+COPY --from=builder /build/community-tags /bin/community-tags
 
 USER nonroot
 
