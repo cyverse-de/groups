@@ -147,3 +147,15 @@ func collapseGrants(want map[grantSpec]bool) map[grantSpec]bool {
 func membersPublicPrivilege(listName, subjectID string) bool {
 	return subjectID == grouperAllSubject && listName == "readers"
 }
+
+// joinablePrivilege reports whether a privilege lets any user add themselves to
+// the group without approval. Grouper's `optins`, which the DE granted to public
+// communities and withheld from public teams -- those go through the
+// join-request flow, where an administrator approves.
+//
+// Deliberately not derived from membersPublicPrivilege: `readers` and `optins`
+// coincide in current DE data but are different privileges, and treating one as
+// the other silently makes every public team joinable.
+func joinablePrivilege(listName, subjectID string) bool {
+	return subjectID == grouperAllSubject && listName == "optins"
+}

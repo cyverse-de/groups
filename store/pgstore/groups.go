@@ -140,10 +140,10 @@ func (t *tx) CreateGroup(ctx context.Context, spec model.GroupSpec) (*model.Grou
 	}
 
 	_, err = t.tx.ExecContext(ctx,
-		`INSERT INTO groups (subject_id, group_type, owner, name, display_name, description, members_public)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		`INSERT INTO groups (subject_id, group_type, owner, name, display_name, description, members_public, joinable)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		internalID, spec.GroupType, nullString(spec.Owner), spec.Name,
-		nullString(spec.DisplayName), spec.Description, spec.MembersPublic)
+		nullString(spec.DisplayName), spec.Description, spec.MembersPublic, spec.Joinable)
 	if err != nil {
 		return nil, translateErr(err)
 	}
@@ -175,6 +175,9 @@ func (t *tx) UpdateGroup(ctx context.Context, id string, upd model.GroupUpdate) 
 	}
 	if upd.MembersPublic != nil {
 		sets = append(sets, "members_public = "+next(*upd.MembersPublic))
+	}
+	if upd.Joinable != nil {
+		sets = append(sets, "joinable = "+next(*upd.Joinable))
 	}
 	if len(sets) == 0 {
 		return t.GetGroup(ctx, id)

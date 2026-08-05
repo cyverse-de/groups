@@ -282,3 +282,22 @@ func (t *target) SetMembersPublic(ctx context.Context, grouperIDs []string) (int
 	}
 	return res.RowsAffected()
 }
+
+// SetJoinable records which groups may be joined without approval, replacing
+// the whole set so a revoked `optins` reverts rather than persisting. Only
+// imported groups are touched; a group created natively since cutover is not
+// Grouper's to decide.
+func (t *target) SetJoinable(ctx context.Context, grouperIDs []string) (int64, error) {
+	res, err := t.db.ExecContext(ctx, `
+		UPDATE groups g
+		   SET joinable = (s.subject_id = ANY($1))
+		  FROM subjects s
+		 WHERE s.id = g.subject_id
+		   AND g.legacy_name IS NOT NULL
+		   AND g.joinable IS DISTINCT FROM (s.subject_id = ANY($1))`,
+		pq.Array(grouperIDs))
+	if err != nil {
+		return 0, fmt.Errorf("could not record which groups may be joined: %w", err)
+	}
+	return res.RowsAffected()
+}

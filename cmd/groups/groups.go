@@ -27,6 +27,9 @@ type groupRequest struct {
 	// MembersPublic makes a public group's member list public too. Meaningless
 	// unless the group is also granted read to the public subject.
 	MembersPublic bool `json:"members_public"`
+	// Joinable lets a user add themselves without approval. Distinct from
+	// MembersPublic: Grouper's `optins` rather than `readers`.
+	Joinable bool `json:"joinable"`
 }
 
 // groupUpdateRequest is the body accepted when updating a group. Fields are
@@ -37,6 +40,7 @@ type groupUpdateRequest struct {
 	DisplayName   *string `json:"display_name"`
 	Description   *string `json:"description"`
 	MembersPublic *bool   `json:"members_public"`
+	Joinable      *bool   `json:"joinable"`
 }
 
 // groupListResponse wraps a list of groups.
@@ -222,6 +226,7 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 			DisplayName:   req.DisplayName,
 			Description:   req.Description,
 			MembersPublic: req.MembersPublic,
+			Joinable:      req.Joinable,
 		})
 		if err != nil {
 			return err
@@ -283,6 +288,7 @@ func (a *App) UpdateGroupHandler(c echo.Context) error {
 			DisplayName:   req.DisplayName,
 			Description:   req.Description,
 			MembersPublic: req.MembersPublic,
+			Joinable:      req.Joinable,
 		})
 		if err != nil {
 			return err

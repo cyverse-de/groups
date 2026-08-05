@@ -52,6 +52,9 @@ func importGrants(ctx context.Context, cfg *config, source *grouperSource, tgt *
 	// because it comes from the same privilege rows, but recorded on the group
 	// rather than as a grant -- see membersPublicPrivilege.
 	membersPublic := map[string]bool{}
+	// Joinability is a separate privilege from member visibility; see
+	// joinablePrivilege for why it is not derived from the other.
+	joinable := map[string]bool{}
 
 	for _, p := range privileges {
 		groupID, ok := idByName[p.GroupName]
@@ -61,6 +64,9 @@ func importGrants(ctx context.Context, cfg *config, source *grouperSource, tgt *
 		}
 		if membersPublicPrivilege(p.ListName, p.SubjectID) {
 			membersPublic[groupID] = true
+		}
+		if joinablePrivilege(p.ListName, p.SubjectID) {
+			joinable[groupID] = true
 		}
 		grant, reason := classifyPrivilege(p.ListName, p.SubjectID, p.Source, grouperAdminUser)
 		if grant == nil {
@@ -82,6 +88,7 @@ func importGrants(ctx context.Context, cfg *config, source *grouperSource, tgt *
 		}
 		logf("dry run: %d grants would be applied across %d groups", total, len(desired))
 		logf("dry run: %d groups would expose their member list", len(membersPublic))
+		logf("dry run: %d groups would be joinable without approval", len(joinable))
 		return nil
 	}
 
@@ -94,6 +101,16 @@ func importGrants(ctx context.Context, cfg *config, source *grouperSource, tgt *
 		return err
 	}
 	rep.MembersPublicChanged = changed
+
+	joinableIDs := make([]string, 0, len(joinable))
+	for id := range joinable {
+		joinableIDs = append(joinableIDs, id)
+	}
+	joinChanged, err := tgt.SetJoinable(ctx, joinableIDs)
+	if err != nil {
+		return err
+	}
+	rep.JoinableChanged = joinChanged
 
 	for _, pg := range parsedGroups {
 		if err := applyGrants(ctx, client, pg, desired[pg.grouper.ID], rep); err != nil {

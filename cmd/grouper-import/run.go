@@ -36,6 +36,10 @@ type report struct {
 	// which is Grouper's `readers` privilege for GrouperAll rather than a grant.
 	MembersPublicChanged int64
 
+	// JoinableChanged counts groups whose join-without-approval flag moved,
+	// which is Grouper's `optins` privilege for GrouperAll.
+	JoinableChanged int64
+
 	NamesTrimmed              []string
 	MembersTrimmed            []string
 	GroupsGoneFromGrouper     []string
@@ -65,6 +69,7 @@ func (r *report) Print() {
 	logf("membership: %d added, %d removed", r.MembersAdded, r.MembersRemoved)
 	logf("grants: %d added, %d removed", r.GrantsAdded, r.GrantsRemoved)
 	logf("member-list visibility: %d groups changed", r.MembersPublicChanged)
+	logf("join-without-approval: %d groups changed", r.JoinableChanged)
 	logf("DE users: %d subjects correlated (%d by this backfill), %d uncorrelated",
 		r.UsersCorrelatedTotal, r.UsersCorrelated, r.UsersUncorrelated)
 

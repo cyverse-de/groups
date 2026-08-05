@@ -40,9 +40,13 @@ type Group struct {
 	// MembersPublic reports whether a public group's member list is public too.
 	// Grouper's `readers` privilege for GrouperAll as opposed to `viewers`; it
 	// means nothing unless the group carries a read grant to GrouperAll.
-	MembersPublic bool      `json:"members_public"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	MembersPublic bool `json:"members_public"`
+	// Joinable reports whether a user may add themselves without approval.
+	// Grouper's `optins` for GrouperAll, as opposed to `readers`; the two
+	// coincide in current data but mean different things.
+	Joinable  bool      `json:"joinable"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Ref identifies a group by its structured identity rather than its ID. Owner is
@@ -61,6 +65,7 @@ type GroupSpec struct {
 	DisplayName   string
 	Description   string
 	MembersPublic bool
+	Joinable      bool
 }
 
 // GroupUpdate carries the fields that may be changed after creation. Nil means
@@ -70,6 +75,7 @@ type GroupUpdate struct {
 	DisplayName   *string
 	Description   *string
 	MembersPublic *bool
+	Joinable      *bool
 }
 
 // Subject is a user as callers see it, hydrated from the identity provider.

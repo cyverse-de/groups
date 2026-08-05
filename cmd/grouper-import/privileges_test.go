@@ -155,3 +155,23 @@ func TestMembersPublicPrivilege(t *testing.T) {
 		})
 	}
 }
+
+func TestJoinablePrivilege(t *testing.T) {
+	tests := []struct {
+		name      string
+		listName  string
+		subjectID string
+		want      bool
+	}{
+		{name: "optins held by GrouperAll, as a public community", listName: "optins", subjectID: "GrouperAll", want: true},
+		{name: "viewers alone does not make a team joinable", listName: "viewers", subjectID: "GrouperAll", want: false},
+		{name: "readers exposes members, it does not admit them", listName: "readers", subjectID: "GrouperAll", want: false},
+		{name: "optins held by a real user is not the public marker", listName: "optins", subjectID: "alice", want: false},
+		{name: "optouts is unrelated", listName: "optouts", subjectID: "GrouperAll", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, joinablePrivilege(tt.listName, tt.subjectID))
+		})
+	}
+}
