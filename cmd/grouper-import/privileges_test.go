@@ -175,3 +175,40 @@ func TestJoinablePrivilege(t *testing.T) {
 		})
 	}
 }
+
+// Every Grouper group privilege must be classified deliberately, not fall
+// through to "unrecognized". Two of the surprises in this migration were
+// privileges that were collapsed into others -- readers into the public marker,
+// optins into nothing -- so the table below is the record of what each one
+// becomes and why.
+func TestEveryGrouperPrivilegeIsClassified(t *testing.T) {
+	tests := []struct {
+		listName string
+		subject  string
+		wantHave bool
+		wantWhy  string
+	}{
+		{listName: "admins", subject: "alice", wantHave: true},
+		{listName: "readers", subject: "alice", wantHave: true},
+		{listName: "optins", subject: "alice", wantWhy: "per-subject join rights"},
+		{listName: "optouts", subject: "alice", wantWhy: "every member may leave"},
+		{listName: "viewers", subject: "alice", wantWhy: "no equivalent level"},
+		{listName: "updaters", subject: "alice", wantWhy: "no equivalent level"},
+		{listName: "groupAttrReaders", subject: "alice", wantWhy: "no equivalent level"},
+		{listName: "groupAttrUpdaters", subject: "alice", wantWhy: "no equivalent level"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.listName, func(t *testing.T) {
+			grant, why := classifyPrivilege(tt.listName, tt.subject, sourceLDAP, testGrouperAdmin)
+			if tt.wantHave {
+				assert.NotNil(t, grant, "%s must map to a grant", tt.listName)
+				return
+			}
+			assert.Nil(t, grant)
+			assert.NotContains(t, why, "unrecognized",
+				"%s must be classified deliberately, not fall through", tt.listName)
+			assert.Contains(t, why, tt.wantWhy)
+		})
+	}
+}

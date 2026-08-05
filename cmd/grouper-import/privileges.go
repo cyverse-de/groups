@@ -80,12 +80,24 @@ func classifyPrivilege(listName, subjectID, subjectSource, grouperAdminUser stri
 		return &grantSpec{SubjectType: subjectType, SubjectID: subjectID, Level: levelRead}, ""
 
 	case "optins":
-		// Membership already implies the ability to leave a group.
-		return nil, "optins: membership already implies the ability to leave"
+		// Held by a real subject rather than GrouperAll, this let one named user
+		// join one group. Nothing models that: joinability is a property of the
+		// group here, set from GrouperAll's optins by joinablePrivilege. Dropping
+		// it means those users can no longer add themselves.
+		return nil, "optins: per-subject join rights have no equivalent"
 
 	case "optouts":
-		// Redundant with membership.
-		return nil, "optouts: redundant with membership"
+		// The DE granted every member `optout` and `read` together, so this is
+		// exactly the member set, and leaving is allowed for any member here.
+		return nil, "optouts: every member may leave, so this adds nothing"
+
+	case "viewers", "updaters", "groupAttrReaders", "groupAttrUpdaters":
+		// Recognized but unmapped. The DE never granted these to a real subject
+		// -- it granted admin, or optout+read, or gave GrouperAll the public
+		// marker -- so anything here was set by hand in Grouper and there is no
+		// level to carry it. Reported rather than treated as unrecognized so a
+		// deployment that does use them shows up in the run.
+		return nil, fmt.Sprintf("%q held by a real subject has no equivalent level", listName)
 	}
 
 	return nil, fmt.Sprintf("unrecognized privilege %q", listName)
