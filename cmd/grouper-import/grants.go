@@ -59,7 +59,9 @@ func importGrants(ctx context.Context, cfg *config, source *grouperSource, tgt *
 	for _, p := range privileges {
 		groupID, ok := idByName[p.GroupName]
 		if !ok {
-			// Skipped as a colliding duplicate.
+			// The group was skipped as a colliding duplicate, so its privileges
+			// go nowhere; counted so the drop is visible in the report.
+			rep.PrivilegesDropped["held on a group that was not imported"]++
 			continue
 		}
 		if membersPublicPrivilege(p.ListName, p.SubjectID) {

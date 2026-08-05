@@ -92,6 +92,20 @@ func (r *report) Print() {
 	}
 }
 
+// verificationFailure reports a run whose writes succeeded but whose outcome
+// failed verification -- rejected members, or a closure that disagrees with
+// Grouper's own expansion -- so the process exits nonzero instead of letting a
+// wrong import pass for a boring one. Worded so it does not read as a crash:
+// the data was written.
+func (r *report) verificationFailure() error {
+	if len(r.MemberFailures) == 0 && r.ClosureMissing == 0 && r.ClosureExtra == 0 {
+		return nil
+	}
+	return fmt.Errorf("the import completed and data was written, but verification failed: "+
+		"%d members rejected, %d effective memberships missing, %d unexpected; see the report above",
+		len(r.MemberFailures), r.ClosureMissing, r.ClosureExtra)
+}
+
 func printList(label string, items []string) {
 	if len(items) == 0 {
 		logf("%s: none", label)
@@ -148,7 +162,7 @@ func run(ctx context.Context, cfg *config) (*report, error) {
 		}
 	}
 
-	return rep, nil
+	return rep, rep.verificationFailure()
 }
 
 // parsedGroup pairs a Grouper group with its resolved identity.
