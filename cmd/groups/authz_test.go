@@ -335,7 +335,7 @@ func TestAdminLevelCanAdministerGroup(t *testing.T) {
 		name, method, path, body string
 	}{
 		{"add members", http.MethodPost, "/groups/g1/members", `{"members":["carol"]}`},
-		{"remove members", http.MethodDelete, "/groups/g1/members", `{"members":["carol"]}`},
+		{"remove members", http.MethodPost, "/groups/g1/members/deleter", `{"members":["carol"]}`},
 		{"replace members", http.MethodPut, "/groups/g1/members", `{"members":["carol"]}`},
 		{"update the group", http.MethodPut, "/groups/g1", `{"name":"Renamed"}`},
 		{"grant a privilege", http.MethodPut, "/groups/g1/permissions/user/dave", `{"level":"read"}`},
