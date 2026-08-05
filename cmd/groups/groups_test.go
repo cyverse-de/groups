@@ -125,6 +125,21 @@ func TestLookupGroup(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
+	// Resolving an identity is a read of the group: the naming scheme is
+	// guessable, so lookup without the read check would let anyone walk
+	// collaborator_list/<user>/default and learn the 32-hex IDs.
+	t.Run("is forbidden without read or membership", func(t *testing.T) {
+		s := &mockStore{
+			isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
+				return false, nil
+			},
+		}
+		app := newTestAppWith(s, denyAllPermissions())
+
+		rec := doRequestAs(app, http.MethodGet, "/groups/lookup?group_type=team&name=x", "", "stranger")
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
 	t.Run("is not shadowed by the group-by-id route", func(t *testing.T) {
 		app := newTestApp(&mockStore{
 			getGroupFn: func(_ context.Context, id string) (*model.Group, error) {

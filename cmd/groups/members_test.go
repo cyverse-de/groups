@@ -223,6 +223,28 @@ func TestSingleMemberOperations(t *testing.T) {
 		assert.True(t, called)
 	})
 
+	// A user the identity provider does not know is bad input, not a missing
+	// group: the single-member add must answer 400.
+	t.Run("add reports an unknown user as a 400", func(t *testing.T) {
+		app := newTestApp(&mockStore{
+			existingSubjectsFn: func(context.Context, []string) ([]string, error) {
+				return nil, nil
+			},
+			addMembersFn: func(context.Context, string, []string, string) ([]model.MemberChange, error) {
+				t.Error("an unknown user must be rejected before reaching the store")
+				return nil, nil
+			},
+		})
+		app.userinfo = &mockUserInfo{
+			getManyFn: func(context.Context, []string) ([]model.Subject, error) {
+				return nil, nil
+			},
+		}
+
+		rec := doRequest(app, http.MethodPut, "/groups/g1/members/ghost", "")
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
 	// A rejected single member is an error, not a 200 carrying a failed result.
 	t.Run("add reports a rejected member as an error", func(t *testing.T) {
 		app := newTestApp(&mockStore{
