@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/cyverse-de/groups/model"
 	"github.com/cyverse-de/groups/permissions"
@@ -55,13 +56,13 @@ func storeError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, userinfo.ErrNotFound):
-		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+		return echo.NewHTTPError(http.StatusNotFound, "not found")
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrCycle):
-		return echo.NewHTTPError(http.StatusConflict, err.Error())
+		return echo.NewHTTPError(http.StatusConflict, clientMessage(err))
 	case errors.Is(err, store.ErrOwnerRequired), errors.Is(err, store.ErrInvalid), errors.Is(err, errUnknownUser):
 		// errUnknownUser is not a 404: the group was found, and it is the named
 		// member that does not exist. A 404 here would read as "no such group".
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		return echo.NewHTTPError(http.StatusBadRequest, clientMessage(err))
 	default:
 		// Anything unrecognized is an internal fault: a driver message, or a
 		// downstream service's response body. Log it and tell the client
@@ -69,6 +70,12 @@ func storeError(err error) error {
 		log.WithFields(logrus.Fields{"error": err.Error()}).Error("unhandled store error")
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal error")
 	}
+}
+
+// clientMessage strips the internal "store: " prefix from a sentinel-wrapped
+// error so responses state the rule without naming the layer it came from.
+func clientMessage(err error) string {
+	return strings.TrimPrefix(err.Error(), "store: ")
 }
 
 // ListGroupsHandler handles GET /groups.

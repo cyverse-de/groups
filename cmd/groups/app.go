@@ -15,6 +15,7 @@ import (
 	"github.com/knadh/koanf"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/sirupsen/logrus"
 	echoSwagger "github.com/swaggo/echo-swagger"
 )
 
@@ -235,17 +236,25 @@ func userinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
 	return userinfo.NewKeycloakClient(cfg), nil
 }
 
-// errorHandler renders errors as a consistent JSON body.
+// errorHandler renders errors as a consistent JSON body. Anything that is not
+// an *echo.HTTPError may quote a downstream response body or hostname, so it is
+// logged for operators and replaced with a generic message.
 func (a *App) errorHandler(err error, c echo.Context) {
 	if c.Response().Committed {
 		return
 	}
 
 	code := http.StatusInternalServerError
-	message := err.Error()
-	if he, ok := err.(*echo.HTTPError); ok {
+	message := "internal error"
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
 		code = he.Code
 		message = fmt.Sprintf("%v", he.Message)
+	} else {
+		log.WithFields(logrus.Fields{
+			"method": c.Request().Method,
+			"path":   c.Request().URL.Path,
+		}).Errorf("unhandled error: %s", err)
 	}
 
 	if jsonErr := c.JSON(code, map[string]string{"error": message}); jsonErr != nil {
