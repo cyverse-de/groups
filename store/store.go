@@ -25,6 +25,11 @@ var (
 	// an owner: teams and collaborator lists need one, communities and system
 	// groups must not have one.
 	ErrOwnerRequired = errors.New("store: owner does not match group type")
+
+	// ErrInvalid reports that a write violated a rule the schema enforces about
+	// the values themselves, such as a blank or colon-bearing group name. It is
+	// bad input rather than a collision with existing data.
+	ErrInvalid = errors.New("store: invalid value")
 )
 
 // ListFilter narrows a group listing. Empty fields are not applied. Member is a

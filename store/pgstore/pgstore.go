@@ -200,16 +200,29 @@ func translateErr(err error) error {
 			if pqErr.Constraint == "groups_identity_unique" {
 				return fmt.Errorf("%w: a group of that type, owner, and name already exists", store.ErrConflict)
 			}
-			return fmt.Errorf("%w: %s", store.ErrConflict, pqErr.Constraint)
+			return store.ErrConflict
 		case codeForeignKeyViolation:
 			if pqErr.Constraint == "groups_group_type_owner_present_fkey" {
 				return store.ErrOwnerRequired
 			}
 		case codeCheckViolation:
-			return fmt.Errorf("%w: %s", store.ErrConflict, pqErr.Constraint)
+			if msg, ok := checkViolationMessages[pqErr.Constraint]; ok {
+				return fmt.Errorf("%w: %s", store.ErrInvalid, msg)
+			}
+			return store.ErrInvalid
 		}
 	}
 	return err
+}
+
+// checkViolationMessages restates the schema's value rules in terms a caller can
+// act on. Constraint names are deliberately not echoed: they name a table and an
+// index the caller cannot do anything about, and they describe the schema to
+// anyone who can reach the API.
+var checkViolationMessages = map[string]string{
+	"groups_name_check":  "a group name cannot be blank",
+	"groups_name_check1": "a group name cannot contain ':'",
+	"groups_owner_check": "a group owner cannot be blank",
 }
 
 // escapeLike escapes the wildcards in a user-supplied search term so it is
