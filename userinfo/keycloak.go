@@ -15,6 +15,11 @@ import (
 // attrInstitution is the Keycloak user attribute holding the user's institution.
 const attrInstitution = "o"
 
+// DefaultRequestTimeout bounds every Keycloak API call. gocloak's resty client
+// has no timeout of its own, so without this an unresponsive Keycloak would pin
+// request goroutines indefinitely.
+const DefaultRequestTimeout = 30 * time.Second
+
 // Config holds the settings needed to reach a Keycloak realm as a confidential
 // client using the client-credentials grant.
 type Config struct {
@@ -29,6 +34,8 @@ type keycloakClient struct {
 	gc  *gocloak.GoCloak
 	cfg Config
 
+	// mu guards the cached token. Login under the lock is bounded by the resty
+	// client timeout, so the lock cannot be held indefinitely.
 	mu          sync.Mutex
 	accessToken string
 	tokenExpiry time.Time
@@ -36,7 +43,9 @@ type keycloakClient struct {
 
 // NewKeycloakClient constructs a Client backed by the Keycloak Admin REST API.
 func NewKeycloakClient(cfg Config) Client {
-	return &keycloakClient{gc: gocloak.NewClient(cfg.BaseURL), cfg: cfg}
+	gc := gocloak.NewClient(cfg.BaseURL)
+	gc.RestyClient().SetTimeout(DefaultRequestTimeout)
+	return &keycloakClient{gc: gc, cfg: cfg}
 }
 
 // token returns a valid service-account access token, reusing the cached one

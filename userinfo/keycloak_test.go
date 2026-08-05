@@ -65,6 +65,16 @@ func TestToSubject(t *testing.T) {
 	}
 }
 
+// Without a timeout an unresponsive Keycloak would pin request goroutines
+// indefinitely -- and the token mutex with them.
+func TestNewKeycloakClientSetsATimeout(t *testing.T) {
+	c, ok := NewKeycloakClient(Config{BaseURL: "http://keycloak.example.org"}).(*keycloakClient)
+	if !ok {
+		t.Fatal("NewKeycloakClient no longer returns a *keycloakClient")
+	}
+	assert.Equal(t, DefaultRequestTimeout, c.gc.RestyClient().GetClient().Timeout)
+}
+
 func TestFirstAttr(t *testing.T) {
 	attrs := &map[string][]string{
 		"k":     {"v1", "v2"},
