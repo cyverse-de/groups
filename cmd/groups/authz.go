@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/cyverse-de/groups/permissions"
@@ -106,6 +107,70 @@ func (a *App) requireReadOrMember(c echo.Context, groupID string) error {
 		return echo.NewHTTPError(http.StatusForbidden, "insufficient privileges")
 	}
 	return nil
+}
+
+// memberListAccess says how the member list should be served.
+type memberListAccess int
+
+const (
+	// membersDenied means the caller may not see the group at all.
+	membersDenied memberListAccess = iota
+	// membersRedacted means the group is public but its membership is not, so
+	// the list is served empty rather than refused.
+	membersRedacted
+	// membersVisible means the caller may see the membership.
+	membersVisible
+)
+
+// memberListAccess decides how to serve a group's member list.
+//
+// Grouper marked public teams with `viewers` and public communities with
+// `readers`. A `viewers` group was visible to everyone and returned an *empty*
+// member list to non-members rather than an error -- so the DE's team page
+// renders for any public team. Refusing instead would break that page for all
+// 183 of them, which is the whole reason this distinction is preserved.
+func (a *App) memberListAccess(c echo.Context, groupID string) (memberListAccess, error) {
+	if err := a.requireReadOrMember(c, groupID); err != nil {
+		var httpErr *echo.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Code == http.StatusForbidden {
+			return membersDenied, nil
+		}
+		return membersDenied, err
+	}
+
+	// The group is readable. Whether its membership is depends on the acting
+	// user's own standing, and failing that on the group's own flag.
+	ctx := c.Request().Context()
+	user := actingUser(c)
+	if a.isAdminUser(user) {
+		return membersVisible, nil
+	}
+
+	ok, err := a.permissions.Check(ctx, permissions.SubjectTypeUser, user,
+		resourceTypeGroup, groupID, permissions.LevelRead, true)
+	if err != nil {
+		return membersDenied, err
+	}
+	if ok {
+		return membersVisible, nil
+	}
+
+	member, err := a.isMember(ctx, groupID, user)
+	if err != nil {
+		return membersDenied, err
+	}
+	if member {
+		return membersVisible, nil
+	}
+
+	group, err := a.store.GetGroup(ctx, groupID)
+	if err != nil {
+		return membersDenied, storeError(err)
+	}
+	if group.MembersPublic {
+		return membersVisible, nil
+	}
+	return membersRedacted, nil
 }
 
 // isPublic reports whether the group carries the read grant to GrouperAll that

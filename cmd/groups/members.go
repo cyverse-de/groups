@@ -53,8 +53,17 @@ type membersResults struct {
 //	@Router	/groups/{id}/members [get]
 func (a *App) GetMembersHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireReadOrMember(c, groupID); err != nil {
+	access, err := a.memberListAccess(c, groupID)
+	if err != nil {
 		return err
+	}
+	switch access {
+	case membersDenied:
+		return echo.NewHTTPError(http.StatusForbidden, "insufficient privileges")
+	case membersRedacted:
+		// Public, but its membership is not. Grouper answered this with an empty
+		// list rather than an error, and the DE's team page depends on it.
+		return c.JSON(http.StatusOK, &membersResponse{Members: []model.Subject{}})
 	}
 
 	ctx := c.Request().Context()

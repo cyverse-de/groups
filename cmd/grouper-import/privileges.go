@@ -135,3 +135,15 @@ func collapseGrants(want map[grantSpec]bool) map[grantSpec]bool {
 	}
 	return collapsed
 }
+
+// membersPublicPrivilege reports whether a privilege makes the group's member
+// list public. Grouper's vocabulary separates `view` (the group exists and can
+// be joined) from `read` (its membership can be listed), and applies the first
+// to public teams and the second to public communities. Both import as the same
+// GrouperAll read grant because the permissions service has no level weaker
+// than read, so the difference is recorded on the group instead -- otherwise
+// every public team's membership becomes world-readable. `optins` marks a group
+// joinable and says nothing about who may list it.
+func membersPublicPrivilege(listName, subjectID string) bool {
+	return subjectID == grouperAllSubject && listName == "readers"
+}

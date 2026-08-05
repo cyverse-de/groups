@@ -32,6 +32,10 @@ type report struct {
 	GrantsAdded   int
 	GrantsRemoved int
 
+	// MembersPublicChanged counts groups whose member-list visibility moved,
+	// which is Grouper's `readers` privilege for GrouperAll rather than a grant.
+	MembersPublicChanged int64
+
 	NamesTrimmed              []string
 	MembersTrimmed            []string
 	GroupsGoneFromGrouper     []string
@@ -60,6 +64,7 @@ func (r *report) Print() {
 		r.GroupsCreated, r.GroupsUpdated, r.GroupsUnchanged)
 	logf("membership: %d added, %d removed", r.MembersAdded, r.MembersRemoved)
 	logf("grants: %d added, %d removed", r.GrantsAdded, r.GrantsRemoved)
+	logf("member-list visibility: %d groups changed", r.MembersPublicChanged)
 	logf("DE users: %d subjects correlated (%d by this backfill), %d uncorrelated",
 		r.UsersCorrelatedTotal, r.UsersCorrelated, r.UsersUncorrelated)
 
@@ -133,7 +138,7 @@ func run(ctx context.Context, cfg *config) (*report, error) {
 	}
 
 	if cfg.runsPermissions() {
-		if err := importGrants(ctx, cfg, source, parsedGroups, rep); err != nil {
+		if err := importGrants(ctx, cfg, source, tgt, parsedGroups, rep); err != nil {
 			return rep, err
 		}
 	}

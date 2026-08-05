@@ -18,7 +18,7 @@ const resourceTypeGroup = "group"
 // service owns resource and subject creation. The calls are idempotent by verb
 // -- PUT to grant, DELETE to revoke -- so a re-run after a partial failure is
 // slow rather than wrong, and no progress journal is needed.
-func importGrants(ctx context.Context, cfg *config, source *grouperSource,
+func importGrants(ctx context.Context, cfg *config, source *grouperSource, tgt *target,
 	parsedGroups []parsedGroup, rep *report) error {
 
 	client := permissions.NewClient(cfg.Permissions)
@@ -48,11 +48,19 @@ func importGrants(ctx context.Context, cfg *config, source *grouperSource,
 		}
 	}
 
+	// Groups whose member list Grouper exposed. Collected alongside the grants
+	// because it comes from the same privilege rows, but recorded on the group
+	// rather than as a grant -- see membersPublicPrivilege.
+	membersPublic := map[string]bool{}
+
 	for _, p := range privileges {
 		groupID, ok := idByName[p.GroupName]
 		if !ok {
 			// Skipped as a colliding duplicate.
 			continue
+		}
+		if membersPublicPrivilege(p.ListName, p.SubjectID) {
+			membersPublic[groupID] = true
 		}
 		grant, reason := classifyPrivilege(p.ListName, p.SubjectID, p.Source, grouperAdminUser)
 		if grant == nil {
@@ -73,8 +81,19 @@ func importGrants(ctx context.Context, cfg *config, source *grouperSource,
 			total += len(set)
 		}
 		logf("dry run: %d grants would be applied across %d groups", total, len(desired))
+		logf("dry run: %d groups would expose their member list", len(membersPublic))
 		return nil
 	}
+
+	publicIDs := make([]string, 0, len(membersPublic))
+	for id := range membersPublic {
+		publicIDs = append(publicIDs, id)
+	}
+	changed, err := tgt.SetMembersPublic(ctx, publicIDs)
+	if err != nil {
+		return err
+	}
+	rep.MembersPublicChanged = changed
 
 	for _, pg := range parsedGroups {
 		if err := applyGrants(ctx, client, pg, desired[pg.grouper.ID], rep); err != nil {

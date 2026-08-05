@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -123,12 +124,66 @@ func TestGetGroupAllowedWhenPublic(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-// The members list is the call Sonora's team page depends on, and the one that
-// returned 403 where Grouper returned an empty list.
-func TestListMembersAllowedWhenPublic(t *testing.T) {
+// Being public does not by itself make the member list public. Grouper gave
+// public teams `viewers` (the group is discoverable and joinable, its members
+// are not shown) and public communities `readers` (members shown too). Both
+// import as the same GrouperAll read grant, so the distinction is carried by
+// members_public and has to be honored here or every public team's membership
+// becomes world-readable.
+func TestListMembersPublicGroup(t *testing.T) {
+	tests := []struct {
+		name          string
+		membersPublic bool
+		want          int
+		wantMembers   int
+	}{
+		{name: "members public, as a public community", membersPublic: true, want: http.StatusOK, wantMembers: 1},
+		// Grouper answered this with an empty list, not an error, and the DE's
+		// team page renders from it. A 403 here breaks every public team.
+		{name: "members private, as a public team", membersPublic: false, want: http.StatusOK, wantMembers: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &mockStore{
+				isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
+					return false, nil
+				},
+				getGroupFn: func(context.Context, string) (*model.Group, error) {
+					return &model.Group{ID: "g1", MembersPublic: tt.membersPublic}, nil
+				},
+				listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+					return []model.MemberRef{{ID: "bob", Type: model.MemberTypeUser}}, nil
+				},
+			}
+			perms := &mockPermissions{
+				checkFn: func(_ context.Context, subjectType, subjectID, _, _, _ string, _ bool) (bool, error) {
+					return subjectType == permissions.SubjectTypeGroup && subjectID == publicSubjectID, nil
+				},
+			}
+			app := newTestAppWith(s, perms)
+
+			rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "stranger")
+			assert.Equal(t, tt.want, rec.Code)
+
+			var body struct {
+				Members []model.Subject `json:"members"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Len(t, body.Members, tt.wantMembers)
+		})
+	}
+}
+
+// A public group's details stay readable regardless, which is the whole point
+// of the marker: the group is discoverable even when its membership is not.
+func TestGetGroupPublicIgnoresMemberVisibility(t *testing.T) {
 	s := &mockStore{
 		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
 			return false, nil
+		},
+		getGroupFn: func(context.Context, string) (*model.Group, error) {
+			return &model.Group{ID: "g1", MembersPublic: false}, nil
 		},
 	}
 	perms := &mockPermissions{
@@ -138,7 +193,7 @@ func TestListMembersAllowedWhenPublic(t *testing.T) {
 	}
 	app := newTestAppWith(s, perms)
 
-	rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "stranger")
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "stranger")
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 

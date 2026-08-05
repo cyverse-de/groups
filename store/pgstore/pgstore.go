@@ -275,13 +275,14 @@ const groupColumns = `
 	g.name,
 	coalesce(g.display_name, ''),
 	g.description,
+	g.members_public,
 	g.created_at,
 	g.updated_at`
 
 func scanGroup(row interface{ Scan(...any) error }) (*model.Group, error) {
 	var g model.Group
 	err := row.Scan(&g.ID, &g.GroupType, &g.Owner, &g.Name, &g.DisplayName,
-		&g.Description, &g.CreatedAt, &g.UpdatedAt)
+		&g.Description, &g.MembersPublic, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, translateErr(err)
 	}

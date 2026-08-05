@@ -135,3 +135,23 @@ func TestOwnerGrant(t *testing.T) {
 		assert.Nil(t, ownerGrant(&ParsedName{GroupType: model.GroupTypeSystem, Name: "de-users"}))
 	})
 }
+
+func TestMembersPublicPrivilege(t *testing.T) {
+	tests := []struct {
+		name      string
+		listName  string
+		subjectID string
+		want      bool
+	}{
+		{name: "readers held by GrouperAll, as a public community", listName: "readers", subjectID: "GrouperAll", want: true},
+		{name: "viewers held by GrouperAll, as a public team", listName: "viewers", subjectID: "GrouperAll", want: false},
+		{name: "optins marks joinable, not readable", listName: "optins", subjectID: "GrouperAll", want: false},
+		{name: "readers held by a real user is an ordinary grant", listName: "readers", subjectID: "alice", want: false},
+		{name: "admins is unrelated", listName: "admins", subjectID: "GrouperAll", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, membersPublicPrivilege(tt.listName, tt.subjectID))
+		})
+	}
+}

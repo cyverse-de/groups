@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/cyverse-de/groups/store/pgstore"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // importLockID namespaces the advisory lock that keeps two imports from
@@ -259,4 +259,26 @@ func nullString(s string) any {
 		return nil
 	}
 	return s
+}
+
+// SetMembersPublic records which groups expose their member list, replacing the
+// whole set rather than adding to it: a group whose `readers` privilege was
+// revoked in Grouper between runs has to revert, or the importer converges to
+// the union of every run it has ever made.
+//
+// Only imported groups are touched. A group created natively since cutover has
+// no legacy_name and its visibility is not Grouper's to decide.
+func (t *target) SetMembersPublic(ctx context.Context, grouperIDs []string) (int64, error) {
+	res, err := t.db.ExecContext(ctx, `
+		UPDATE groups g
+		   SET members_public = (s.subject_id = ANY($1))
+		  FROM subjects s
+		 WHERE s.id = g.subject_id
+		   AND g.legacy_name IS NOT NULL
+		   AND g.members_public IS DISTINCT FROM (s.subject_id = ANY($1))`,
+		pq.Array(grouperIDs))
+	if err != nil {
+		return 0, fmt.Errorf("could not record which groups expose their members: %w", err)
+	}
+	return res.RowsAffected()
 }

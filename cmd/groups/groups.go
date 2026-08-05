@@ -23,15 +23,19 @@ type groupRequest struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
+	// MembersPublic makes a public group's member list public too. Meaningless
+	// unless the group is also granted read to the public subject.
+	MembersPublic bool `json:"members_public"`
 }
 
 // groupUpdateRequest is the body accepted when updating a group. Fields are
 // pointers so an absent field is distinguishable from one set to empty; group
 // type and owner are absent because they are immutable.
 type groupUpdateRequest struct {
-	Name        *string `json:"name"`
-	DisplayName *string `json:"display_name"`
-	Description *string `json:"description"`
+	Name          *string `json:"name"`
+	DisplayName   *string `json:"display_name"`
+	Description   *string `json:"description"`
+	MembersPublic *bool   `json:"members_public"`
 }
 
 // groupListResponse wraps a list of groups.
@@ -188,11 +192,12 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 	var created *model.Group
 	err = a.store.WithTx(ctx, func(tx store.Tx) error {
 		g, err := tx.CreateGroup(ctx, model.GroupSpec{
-			GroupType:   req.GroupType,
-			Owner:       owner,
-			Name:        req.Name,
-			DisplayName: req.DisplayName,
-			Description: req.Description,
+			GroupType:     req.GroupType,
+			Owner:         owner,
+			Name:          req.Name,
+			DisplayName:   req.DisplayName,
+			Description:   req.Description,
+			MembersPublic: req.MembersPublic,
 		})
 		if err != nil {
 			return err
@@ -242,9 +247,10 @@ func (a *App) UpdateGroupHandler(c echo.Context) error {
 	var updated *model.Group
 	err := a.store.WithTx(ctx, func(tx store.Tx) error {
 		g, err := tx.UpdateGroup(ctx, groupID, model.GroupUpdate{
-			Name:        req.Name,
-			DisplayName: req.DisplayName,
-			Description: req.Description,
+			Name:          req.Name,
+			DisplayName:   req.DisplayName,
+			Description:   req.Description,
+			MembersPublic: req.MembersPublic,
 		})
 		if err != nil {
 			return err

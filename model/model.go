@@ -31,14 +31,18 @@ const (
 // Group is a group as callers see it. ID is the external identifier: a 32-hex
 // string, preserved from Grouper for imported groups.
 type Group struct {
-	ID          string    `json:"id"`
-	GroupType   string    `json:"group_type"`
-	Owner       string    `json:"owner,omitempty"`
-	Name        string    `json:"name"`
-	DisplayName string    `json:"display_name,omitempty"`
-	Description string    `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string `json:"id"`
+	GroupType   string `json:"group_type"`
+	Owner       string `json:"owner,omitempty"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	Description string `json:"description,omitempty"`
+	// MembersPublic reports whether a public group's member list is public too.
+	// Grouper's `readers` privilege for GrouperAll as opposed to `viewers`; it
+	// means nothing unless the group carries a read grant to GrouperAll.
+	MembersPublic bool      `json:"members_public"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Ref identifies a group by its structured identity rather than its ID. Owner is
@@ -51,19 +55,21 @@ type Ref struct {
 
 // GroupSpec carries the fields needed to create a group.
 type GroupSpec struct {
-	GroupType   string
-	Owner       string
-	Name        string
-	DisplayName string
-	Description string
+	GroupType     string
+	Owner         string
+	Name          string
+	DisplayName   string
+	Description   string
+	MembersPublic bool
 }
 
 // GroupUpdate carries the fields that may be changed after creation. Nil means
 // "leave unchanged"; group type and owner are immutable and absent by design.
 type GroupUpdate struct {
-	Name        *string
-	DisplayName *string
-	Description *string
+	Name          *string
+	DisplayName   *string
+	Description   *string
+	MembersPublic *bool
 }
 
 // Subject is a user as callers see it, hydrated from the identity provider.
