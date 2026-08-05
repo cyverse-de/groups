@@ -229,9 +229,13 @@ func (t *tx) ReplaceMembers(ctx context.Context, groupID string, subjectIDs []st
 			toRemove = append(toRemove, m.ID)
 		}
 	}
+	// Deduplicated so a subject repeated in the request yields one add and one
+	// reported change rather than two.
 	var toAdd []string
+	queued := make(map[string]bool, len(subjectIDs))
 	for _, id := range subjectIDs {
-		if !existing[id] {
+		if !existing[id] && !queued[id] {
+			queued[id] = true
 			toAdd = append(toAdd, id)
 		}
 	}

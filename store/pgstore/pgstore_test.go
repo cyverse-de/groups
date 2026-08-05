@@ -309,6 +309,23 @@ func TestMembership(t *testing.T) {
 		assert.ElementsMatch(t, []string{"test-bob", "test-dan"}, ids,
 			"carol was already a member and must not be reported")
 	})
+
+	t.Run("replace deduplicates a repeated subject", func(t *testing.T) {
+		group := mustCreate(t, s, collabList("test-frank", "default"))
+
+		var changes []model.MemberChange
+		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
+			var err error
+			changes, err = tx.ReplaceMembers(t.Context(), group.ID,
+				[]string{"test-gina", "test-gina"}, "test-actor")
+			return err
+		}))
+		assert.Len(t, changes, 1, "a repeated subject must yield one add and one change")
+
+		members, err := s.ListMembers(t.Context(), group.ID)
+		require.NoError(t, err)
+		assert.Len(t, members, 1)
+	})
 }
 
 func TestNesting(t *testing.T) {
