@@ -180,6 +180,37 @@ func TestListMembersPublicGroup(t *testing.T) {
 	}
 }
 
+// A plain member of a private group sees the full member list: membership is
+// its own standing, needing neither a grant nor the public marker.
+func TestListMembersVisibleToMember(t *testing.T) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(_ context.Context, _, username string) (bool, error) {
+			return username == "bob", nil
+		},
+		getGroupFn: func(context.Context, string) (*model.Group, error) {
+			return &model.Group{ID: "g1", MembersPublic: false}, nil
+		},
+		listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+			return []model.MemberRef{
+				{ID: "bob", Type: model.MemberTypeUser},
+				{ID: "carol", Type: model.MemberTypeUser},
+			}, nil
+		},
+	}
+	app := newTestAppWith(s, denyAllPermissions())
+
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "bob")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Members  []model.Subject `json:"members"`
+		Redacted bool            `json:"redacted"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Len(t, body.Members, 2, "a member must see the full list, not a redaction")
+	assert.False(t, body.Redacted)
+}
+
 // A public group's details stay readable regardless, which is the whole point
 // of the marker: the group is discoverable even when its membership is not.
 func TestGetGroupPublicIgnoresMemberVisibility(t *testing.T) {
