@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"testing"
@@ -601,4 +602,95 @@ func TestEnsureUserSubjectCorrelatesDEUser(t *testing.T) {
 	assert.Equal(t, deUserID, *userIDFor("test-known"))
 	assert.Nil(t, userIDFor("test-nologin"),
 		"a member who has never logged in must still be added, uncorrelated")
+}
+
+// Listings are access-filtered. Grouper's group search only ever returned what
+// the caller could see, so an unfiltered listing lets any user enumerate every
+// team, community, and -- worst -- every other user's personal collaborator
+// lists by name, description, and owner.
+//
+// The filter has to agree exactly with what the read check allows. A group that
+// lists but cannot be opened is the bug this replaces; one that opens but never
+// lists is unreachable.
+func TestListGroupsVisibleTo(t *testing.T) {
+	s := testStore(t)
+
+	mine := mustCreate(t, s, collabList("test-alice", "default"))
+	joined := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-bob", Name: "Joined"})
+	public := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeCommunity, Name: "Public"})
+	granted := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-bob", Name: "Granted"})
+	viaGroup := mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-bob", Name: "ViaGroup"})
+	mustCreate(t, s, model.GroupSpec{
+		GroupType: model.GroupTypeTeam, Owner: "test-bob", Name: "Private"})
+
+	mustAddMembers(t, s, joined.ID, "test-alice")
+	mustAddMembers(t, s, mine.ID, "test-alice")
+
+	grantOnGroup(t, s, public.ID, "GrouperAll", "group", "read")
+	grantOnGroup(t, s, granted.ID, "test-alice", "user", "read")
+	// A grant held by a group alice belongs to reaches her the same way the
+	// permission hot path expands a subject.
+	grantOnGroup(t, s, viaGroup.ID, mine.ID, "group", "read")
+
+	groups, err := s.ListGroups(t.Context(), store.ListFilter{VisibleTo: "test-alice"})
+	require.NoError(t, err)
+
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g.Name)
+	}
+	assert.ElementsMatch(t, []string{"default", "Joined", "Public", "Granted", "ViaGroup"}, names)
+	assert.NotContains(t, names, "Private")
+
+	t.Run("an empty VisibleTo does not filter, for the admin accounts", func(t *testing.T) {
+		all, err := s.ListGroups(t.Context(), store.ListFilter{})
+		require.NoError(t, err)
+		assert.Len(t, all, 6)
+	})
+}
+
+// grantOnGroup records a permission on a group the way the permissions service
+// does: the resource is named by the group's external id, and the grantee is a
+// subject of the given type.
+func grantOnGroup(t *testing.T, s *Store, groupID, subjectID, subjectType, level string) {
+	t.Helper()
+	ctx := t.Context()
+
+	var rtID string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM resource_types WHERE name = 'group'`).Scan(&rtID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = s.db.QueryRowContext(ctx,
+			`INSERT INTO resource_types (name, description) VALUES ('group', 'A group.') RETURNING id`).Scan(&rtID)
+	}
+	require.NoError(t, err)
+
+	var resID string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM resources WHERE name = $1 AND resource_type_id = $2`, groupID, rtID).Scan(&resID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = s.db.QueryRowContext(ctx,
+			`INSERT INTO resources (name, resource_type_id) VALUES ($1, $2) RETURNING id`,
+			groupID, rtID).Scan(&resID)
+	}
+	require.NoError(t, err)
+
+	var subjID string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM subjects WHERE subject_id = $1`, subjectID).Scan(&subjID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = s.db.QueryRowContext(ctx,
+			`INSERT INTO subjects (subject_id, subject_type) VALUES ($1, $2::subject_type_enum) RETURNING id`,
+			subjectID, subjectType).Scan(&subjID)
+	}
+	require.NoError(t, err)
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO permissions (subject_id, resource_id, permission_level_id)
+		SELECT $1, $2, pl.id FROM permission_levels pl WHERE pl.name = $3
+		ON CONFLICT (subject_id, resource_id) DO NOTHING`, subjID, resID, level)
+	require.NoError(t, err)
 }

@@ -41,6 +41,16 @@ type ListFilter struct {
 	Search    string
 	Limit     int
 	Offset    int
+
+	// VisibleTo restricts the listing to groups this user may read: ones they
+	// hold a grant on directly or through a group they belong to, ones they are
+	// an effective member of, and public ones. Empty means no filtering, which
+	// is only for the administrative service accounts.
+	//
+	// It has to agree with the service's read check exactly. A group that lists
+	// but cannot be opened confuses callers; one that opens but never lists is
+	// unreachable.
+	VisibleTo string
 }
 
 // Reader is the read-only half of the store, available both inside and outside a

@@ -87,11 +87,21 @@ func (a *App) ListGroupsHandler(c echo.Context) error {
 		limit = maxListLimit
 	}
 
+	// Listings are access-filtered, as Grouper's group search was: without it any
+	// user can enumerate every team, community, and other users' personal
+	// collaborator lists by name, description, and owner. The administrative
+	// service accounts see everything, which is what they exist for.
+	visibleTo := actingUser(c)
+	if a.isAdminUser(visibleTo) {
+		visibleTo = ""
+	}
+
 	groups, err := a.store.ListGroups(c.Request().Context(), store.ListFilter{
 		GroupType: c.QueryParam("group_type"),
 		Owner:     c.QueryParam("owner"),
 		Member:    c.QueryParam("member"),
 		Search:    c.QueryParam("search"),
+		VisibleTo: visibleTo,
 		Limit:     limit,
 		Offset:    offset,
 	})

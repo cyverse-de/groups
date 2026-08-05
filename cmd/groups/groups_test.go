@@ -270,3 +270,34 @@ func TestDeleteGroup(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, called)
 }
+
+// The listing is access-filtered by the acting user, except for the
+// administrative service accounts, which terrain relies on for its own lookups.
+func TestListGroupsFiltersByActingUser(t *testing.T) {
+	tests := []struct {
+		name          string
+		user          string
+		wantVisibleTo string
+	}{
+		{name: "an ordinary user sees only what they may read", user: "alice", wantVisibleTo: "alice"},
+		{name: "an admin service account sees everything", user: "permissions-svc", wantVisibleTo: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got store.ListFilter
+			s := &mockStore{
+				listGroupsFn: func(_ context.Context, f store.ListFilter) ([]model.Group, error) {
+					got = f
+					return nil, nil
+				},
+			}
+			app := newTestAppWith(s, &mockPermissions{})
+			app.adminUsers = map[string]struct{}{"permissions-svc": {}}
+
+			rec := doRequestAs(app, http.MethodGet, "/groups", "", tt.user)
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, tt.wantVisibleTo, got.VisibleTo)
+		})
+	}
+}

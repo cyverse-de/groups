@@ -60,6 +60,34 @@ func (r *reader) ListGroups(ctx context.Context, f store.ListFilter) ([]model.Gr
 		p := nextID("%" + escapeLike(f.Search) + "%")
 		where = append(where, `(g.name ILIKE `+p+` ESCAPE '\' OR g.description ILIKE `+p+` ESCAPE '\')`)
 	}
+	if f.VisibleTo != "" {
+		u := nextID(f.VisibleTo)
+		// One EXISTS per way of being allowed to see a group, mirroring the
+		// service's read check. The grant arm expands the user to their groups
+		// the same way permission lookup does, because grants are held by groups
+		// as well as users; GrouperAll is checked as itself, since it is a
+		// sentinel nobody is a member of.
+		where = append(where, `(
+			EXISTS (SELECT 1
+			          FROM group_effective_members vem
+			          JOIN subjects vms ON vms.id = vem.member_id
+			         WHERE vem.group_id = g.subject_id AND vms.subject_id = `+u+`)
+			OR EXISTS (SELECT 1
+			             FROM permissions vp
+			             JOIN resources vr ON vr.id = vp.resource_id
+			             JOIN resource_types vrt ON vrt.id = vr.resource_type_id
+			            WHERE vrt.name = 'group'
+			              AND vr.name = s.subject_id
+			              AND (vp.subject_id IN (
+			                       SELECT vu.id FROM subjects vu WHERE vu.subject_id = `+u+`
+			                       UNION
+			                       SELECT vgem.group_id
+			                         FROM group_effective_members vgem
+			                         JOIN subjects vgu ON vgu.id = vgem.member_id
+			                        WHERE vgu.subject_id = `+u+`)
+			                   OR vp.subject_id = (SELECT id FROM subjects WHERE subject_id = 'GrouperAll')))
+		)`)
+	}
 
 	query := `SELECT ` + groupColumns + `
 		FROM groups g
