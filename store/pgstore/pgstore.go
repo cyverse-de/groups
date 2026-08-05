@@ -13,10 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyverse-de/go-mod/logging"
 	"github.com/cyverse-de/groups/model"
 	"github.com/cyverse-de/groups/store"
 	"github.com/lib/pq"
+	"github.com/sirupsen/logrus"
 )
+
+var log = logging.Log.WithFields(logrus.Fields{"package": "pgstore"})
 
 // PostgreSQL error codes we translate into store errors.
 const (
@@ -200,13 +204,16 @@ func translateErr(err error) error {
 			if pqErr.Constraint == "groups_identity_unique" {
 				return fmt.Errorf("%w: a group of that type, owner, and name already exists", store.ErrConflict)
 			}
+			logWithheldConstraint(pqErr, false)
 			return store.ErrConflict
 		case codeForeignKeyViolation:
 			if pqErr.Constraint == "groups_group_type_owner_present_fkey" {
 				return store.ErrOwnerRequired
 			}
 		case codeCheckViolation:
-			if msg, ok := checkViolationMessages[pqErr.Constraint]; ok {
+			msg, known := checkViolationMessages[pqErr.Constraint]
+			logWithheldConstraint(pqErr, !known)
+			if known {
 				return fmt.Errorf("%w: %s", store.ErrInvalid, msg)
 			}
 			return store.ErrInvalid
@@ -223,6 +230,25 @@ var checkViolationMessages = map[string]string{
 	"groups_name_check":  "a group name cannot be blank",
 	"groups_name_check1": "a group name cannot contain ':'",
 	"groups_owner_check": "a group owner cannot be blank",
+}
+
+// logWithheldConstraint records the constraint the response deliberately omits,
+// so a rejection is still traceable from the logs. Rejecting bad input is
+// routine; an unexplained constraint is not, and means the schema has gained a
+// rule this package cannot describe — the caller got a message naming no
+// actionable rule, which is the shape of a support ticket nobody can answer.
+func logWithheldConstraint(pqErr *pq.Error, unexplained bool) {
+	entry := log.WithFields(logrus.Fields{
+		"constraint": pqErr.Constraint,
+		"code":       string(pqErr.Code),
+		"table":      pqErr.Table,
+	})
+	if unexplained {
+		entry.Warn("rejected a write violating a constraint this package has no message for; " +
+			"add it to checkViolationMessages so the caller learns the rule")
+		return
+	}
+	entry.Info("rejected a write violating a schema constraint; the response states the rule, not the constraint")
 }
 
 // escapeLike escapes the wildcards in a user-supplied search term so it is

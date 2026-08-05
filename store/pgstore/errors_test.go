@@ -7,6 +7,8 @@ import (
 
 	"github.com/cyverse-de/groups/store"
 	"github.com/lib/pq"
+	"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -85,6 +87,65 @@ func TestTranslateErr(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Sanitizing the response costs the operator the one detail that identifies
+// which rule was tripped, so it has to survive somewhere. The log is that
+// somewhere.
+func TestTranslateErrLogsWithheldConstraint(t *testing.T) {
+	tests := []struct {
+		name       string
+		in         *pq.Error
+		wantLevel  logrus.Level
+		constraint string
+	}{
+		{
+			name:       "a known check violation is routine",
+			in:         &pq.Error{Code: codeCheckViolation, Constraint: "groups_name_check1", Table: "groups"},
+			wantLevel:  logrus.InfoLevel,
+			constraint: "groups_name_check1",
+		},
+		{
+			// An unexplained constraint means the schema grew a rule this package
+			// cannot describe, so callers get a message that tells them nothing.
+			name:       "an unknown check violation is worth attention",
+			in:         &pq.Error{Code: codeCheckViolation, Constraint: "groups_some_future_check", Table: "groups"},
+			wantLevel:  logrus.WarnLevel,
+			constraint: "groups_some_future_check",
+		},
+		{
+			name:       "a withheld unique violation is recorded too",
+			in:         &pq.Error{Code: codeUniqueViolation, Constraint: "subjects_user_id_unique", Table: "subjects"},
+			wantLevel:  logrus.InfoLevel,
+			constraint: "subjects_user_id_unique",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hook := test.NewLocal(log.Logger)
+			t.Cleanup(hook.Reset)
+
+			_ = translateErr(tt.in)
+
+			entry := hook.LastEntry()
+			if assert.NotNil(t, entry, "nothing was logged") {
+				assert.Equal(t, tt.wantLevel, entry.Level)
+				assert.Equal(t, tt.constraint, entry.Data["constraint"])
+			}
+		})
+	}
+}
+
+// The identity collision already tells the caller which fields collided, so
+// there is nothing withheld and nothing to log.
+func TestTranslateErrDoesNotLogWhatItExplains(t *testing.T) {
+	hook := test.NewLocal(log.Logger)
+	t.Cleanup(hook.Reset)
+
+	_ = translateErr(&pq.Error{Code: codeUniqueViolation, Constraint: "groups_identity_unique"})
+
+	assert.Nil(t, hook.LastEntry())
 }
 
 // A driver's constraint names are an implementation detail of the schema.
