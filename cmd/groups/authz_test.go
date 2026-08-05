@@ -99,6 +99,73 @@ func TestGetGroupForbiddenForNonMember(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+// A public team or community is marked by a read grant to GrouperAll, which
+// Grouper resolved as everyone. Nothing expands a user to GrouperAll -- it has
+// no members -- so the acting-user check can never see that grant, and without
+// consulting it directly every public group becomes unreadable to non-members.
+// Production carries ~183 public teams and ~55 public communities.
+func TestGetGroupAllowedWhenPublic(t *testing.T) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
+			return false, nil
+		},
+	}
+	perms := &mockPermissions{
+		checkFn: func(_ context.Context, subjectType, subjectID, _, _, minLevel string, _ bool) (bool, error) {
+			return subjectType == permissions.SubjectTypeGroup &&
+				subjectID == publicSubjectID &&
+				minLevel == permissions.LevelRead, nil
+		},
+	}
+	app := newTestAppWith(s, perms)
+
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "stranger")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// The members list is the call Sonora's team page depends on, and the one that
+// returned 403 where Grouper returned an empty list.
+func TestListMembersAllowedWhenPublic(t *testing.T) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
+			return false, nil
+		},
+	}
+	perms := &mockPermissions{
+		checkFn: func(_ context.Context, subjectType, subjectID, _, _, _ string, _ bool) (bool, error) {
+			return subjectType == permissions.SubjectTypeGroup && subjectID == publicSubjectID, nil
+		},
+	}
+	app := newTestAppWith(s, perms)
+
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1/members", "", "stranger")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// The public check must not become a blanket allow: a group with no GrouperAll
+// grant stays private to everyone who is neither a member nor granted access.
+func TestGetGroupStillForbiddenWhenNotPublic(t *testing.T) {
+	s := &mockStore{
+		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
+			return false, nil
+		},
+	}
+	var askedAboutPublic bool
+	perms := &mockPermissions{
+		checkFn: func(_ context.Context, subjectType, subjectID, _, _, _ string, _ bool) (bool, error) {
+			if subjectType == permissions.SubjectTypeGroup && subjectID == publicSubjectID {
+				askedAboutPublic = true
+			}
+			return false, nil
+		},
+	}
+	app := newTestAppWith(s, perms)
+
+	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "stranger")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.True(t, askedAboutPublic, "the public marker should have been consulted")
+}
+
 // Membership through a nested group grants access, because the check reads
 // effective rather than direct membership.
 func TestGetGroupAllowedByNestedMembership(t *testing.T) {

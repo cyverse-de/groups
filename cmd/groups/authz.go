@@ -12,6 +12,12 @@ import (
 // are registered.
 const resourceTypeGroup = "group"
 
+// publicSubjectID is Grouper's "everyone" subject. A read grant held by it marks
+// a team or community public, and Grouper's own privilege engine resolved it as
+// every user. Nothing here expands a user to it -- it is a group-typed subject
+// with no members and no groups row -- so it has to be checked as itself.
+const publicSubjectID = "GrouperAll"
+
 // userContextKey is the echo context key under which the acting user is stored.
 const userContextKey = "user"
 
@@ -78,6 +84,20 @@ func (a *App) requireReadOrMember(c echo.Context, groupID string) error {
 		return nil
 	}
 
+	// A public group is readable by anyone. This is a separate check because the
+	// one above expands the acting user to their groups, and no user is ever a
+	// member of GrouperAll -- so the grant that marks a group public is
+	// invisible to it. Without this, every public team and community in the
+	// deployment becomes unreadable to non-members, which is not how Grouper
+	// behaved: it resolved GrouperAll as everyone.
+	public, err := a.isPublic(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	if public {
+		return nil
+	}
+
 	member, err := a.isMember(ctx, groupID, user)
 	if err != nil {
 		return err
@@ -86,6 +106,13 @@ func (a *App) requireReadOrMember(c echo.Context, groupID string) error {
 		return echo.NewHTTPError(http.StatusForbidden, "insufficient privileges")
 	}
 	return nil
+}
+
+// isPublic reports whether the group carries the read grant to GrouperAll that
+// marks a team or community public.
+func (a *App) isPublic(ctx context.Context, groupID string) (bool, error) {
+	return a.permissions.Check(ctx, permissions.SubjectTypeGroup, publicSubjectID,
+		resourceTypeGroup, groupID, permissions.LevelRead, false)
 }
 
 // isMember reports whether the named user belongs to the group, through any
