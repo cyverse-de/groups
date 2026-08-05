@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cyverse-de/groups/model"
+	"github.com/cyverse-de/groups/store"
 	"github.com/cyverse-de/groups/userinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,4 +131,59 @@ func TestSubjectGroupsFiltersByActingUser(t *testing.T) {
 			assert.Equal(t, tt.wantVisibleTo, got)
 		})
 	}
+}
+
+// Groups are subjects too. Grouper's subject search returned teams and
+// collaborator lists alongside users, tagged source_id "g:gsa", and the DE's
+// sharing dialog recognizes a group by exactly that: without them, sharing data
+// or an app with a team is unreachable from the UI.
+func TestSearchSubjectsIncludesGroups(t *testing.T) {
+	var gotFilter store.ListFilter
+	s := &mockStore{
+		listGroupsFn: func(_ context.Context, f store.ListFilter) ([]model.Group, error) {
+			gotFilter = f
+			return []model.Group{
+				{ID: "abc123", Name: "Field Team", Description: "field sampling"},
+			}, nil
+		},
+	}
+	app := newTestAppWith(s, &mockPermissions{})
+	app.userinfo = &mockUserInfo{
+		searchFn: func(context.Context, string) ([]model.Subject, error) {
+			return []model.Subject{{ID: "bob", Name: "bob", SourceID: model.SourceUser}}, nil
+		},
+	}
+
+	rec := doRequestAs(app, http.MethodGet, "/subjects?search=Field", "", "alice")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Subjects []model.Subject `json:"subjects"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	var group *model.Subject
+	for i, sub := range body.Subjects {
+		if sub.SourceID == model.SourceGroup {
+			group = &body.Subjects[i]
+		}
+	}
+	require.NotNil(t, group, "the search must return group subjects, not only users")
+	assert.Equal(t, "abc123", group.ID, "a group subject is identified by its external group id")
+	assert.Equal(t, "Field Team", group.Name)
+
+	// Users are still returned; the group half is additive, not a replacement.
+	var user *model.Subject
+	for i, sub := range body.Subjects {
+		if sub.SourceID == model.SourceUser {
+			user = &body.Subjects[i]
+		}
+	}
+	require.NotNil(t, user, "user subjects must still be returned")
+	assert.Equal(t, "bob", user.ID)
+
+	// The search term reaches the store, and the listing is access-filtered so
+	// the search cannot expose a private team's name.
+	assert.Equal(t, "Field", gotFilter.Search)
+	assert.Equal(t, "alice", gotFilter.VisibleTo)
 }

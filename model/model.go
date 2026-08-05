@@ -86,6 +86,9 @@ type Subject struct {
 	LastName    string `json:"last_name,omitempty"`
 	Email       string `json:"email,omitempty"`
 	Institution string `json:"institution,omitempty"`
+	// Description is set only for group subjects, matching what Grouper
+	// returned for them; users have none.
+	Description string `json:"description,omitempty"`
 	SourceID    string `json:"source_id,omitempty"`
 }
 

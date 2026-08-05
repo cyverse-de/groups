@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/cyverse-de/groups/model"
+	"github.com/cyverse-de/groups/store"
 	"github.com/cyverse-de/groups/userinfo"
 	"github.com/labstack/echo/v4"
 )
@@ -28,11 +30,55 @@ type lookupRequest struct {
 //	@Success	200	{object}	subjectsResponse
 //	@Router	/subjects [get]
 func (a *App) SearchSubjectsHandler(c echo.Context) error {
-	subjects, err := a.userinfo.Search(c.Request().Context(), c.QueryParam("search"))
+	ctx := c.Request().Context()
+	search := c.QueryParam("search")
+
+	subjects, err := a.userinfo.Search(ctx, search)
 	if err != nil {
 		return storeError(err)
 	}
-	return c.JSON(http.StatusOK, &subjectsResponse{Subjects: subjects})
+
+	groups, err := a.searchGroupSubjects(ctx, c, search)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, &subjectsResponse{Subjects: append(subjects, groups...)})
+}
+
+// searchGroupSubjects returns the groups matching the search term as subjects.
+//
+// Groups are subjects: Grouper's subject search returned teams and collaborator
+// lists alongside users, tagged with the group source ID, and the DE's sharing
+// dialog recognizes a group by exactly that tag. Omitting them makes sharing a
+// resource with a team unreachable from the UI, with nothing raised anywhere.
+//
+// The listing is access-filtered like any other, so this cannot be used to
+// discover the name of a group the caller could not already see.
+func (a *App) searchGroupSubjects(ctx context.Context, c echo.Context, search string) ([]model.Subject, error) {
+	visibleTo := actingUser(c)
+	if a.isAdminUser(visibleTo) {
+		visibleTo = ""
+	}
+
+	groups, err := a.store.ListGroups(ctx, store.ListFilter{
+		Search:    search,
+		VisibleTo: visibleTo,
+		Limit:     maxListLimit,
+	})
+	if err != nil {
+		return nil, storeError(err)
+	}
+
+	subjects := make([]model.Subject, 0, len(groups))
+	for _, g := range groups {
+		subjects = append(subjects, model.Subject{
+			ID:          g.ID,
+			Name:        g.Name,
+			Description: g.Description,
+			SourceID:    model.SourceGroup,
+		})
+	}
+	return subjects, nil
 }
 
 // LookupSubjectsHandler handles POST /subjects/lookup. Subject IDs that do not
