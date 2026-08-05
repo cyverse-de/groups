@@ -17,13 +17,15 @@ type report struct {
 	ValuesRewritten  int
 	RowsRewritten    int64
 	RowsDeduplicated int64
+	UnitsNormalized  int64
 	Orphans          []string
 }
 
 func (r *report) Print() {
 	logf("communities known: %d", r.CommunitiesKnown)
 	logf("distinct tag values: %d, of which %d rewritten", r.ValuesSeen, r.ValuesRewritten)
-	logf("tag rows: %d rewritten, %d removed as duplicates", r.RowsRewritten, r.RowsDeduplicated)
+	logf("tag rows: %d rewritten, %d removed as duplicates, %d units normalized",
+		r.RowsRewritten, r.RowsDeduplicated, r.UnitsNormalized)
 
 	if len(r.Orphans) == 0 {
 		logf("tag values naming no community (left as they are): none")
@@ -158,6 +160,43 @@ func applyRewrites(ctx context.Context, db *sql.DB, attribute string,
 	for _, old := range from {
 		id := rewrite[old]
 
+		// The new contract has no unit: apps writes and deletes community tags
+		// with unit '', so a row carrying anything else would survive every
+		// removal as a silent no-op. Normalize units on the rows being
+		// rewritten -- production holds three such rows, hand-tagged with file
+		// formats. Rows that would become duplicates of an existing row under
+		// avus_unique are dropped first: the tag they express is already there.
+		dupUnits, err := tx.ExecContext(ctx, `
+			DELETE FROM avus a
+			 WHERE a.attribute = $1 AND a.value = $2 AND a.unit <> ''
+			   AND EXISTS (
+			       SELECT 1 FROM avus b
+			        WHERE b.attribute = a.attribute AND b.value = a.value
+			          AND b.target_id = a.target_id
+			          AND b.target_type = a.target_type
+			          AND (b.unit = '' OR (b.unit <> '' AND b.unit < a.unit)))`,
+			attribute, old)
+		if err != nil {
+			return fmt.Errorf("could not remove duplicate-unit tags for %q: %w", old, err)
+		}
+		n, err := dupUnits.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("could not count duplicate-unit tags for %q: %w", old, err)
+		}
+		rep.RowsDeduplicated += n
+
+		normalized, err := tx.ExecContext(ctx,
+			`UPDATE avus SET unit = '', modified_on = now()
+			  WHERE attribute = $1 AND value = $2 AND unit <> ''`, attribute, old)
+		if err != nil {
+			return fmt.Errorf("could not normalize tag units for %q: %w", old, err)
+		}
+		n, err = normalized.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("could not count normalized tag units for %q: %w", old, err)
+		}
+		rep.UnitsNormalized += n
+
 		// An app already carrying the target ID -- tagged again after the
 		// cutover, say -- would collide with avus_unique on rewrite. Drop the
 		// row being migrated rather than fail the run: the tag it expresses is
@@ -174,7 +213,7 @@ func applyRewrites(ctx context.Context, db *sql.DB, attribute string,
 		if err != nil {
 			return fmt.Errorf("could not remove duplicate tags for %q: %w", old, err)
 		}
-		n, err := dropped.RowsAffected()
+		n, err = dropped.RowsAffected()
 		if err != nil {
 			return fmt.Errorf("could not count duplicate tags for %q: %w", old, err)
 		}
