@@ -13,10 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests need a PostgreSQL database with the DE schema applied. Set
-// GROUPS_TEST_DB_URI to run them, e.g.
+// These tests need a PostgreSQL database with the DE schema applied, and they
+// are DESTRUCTIVE: setup deletes every group in the target schema. Point them
+// at a scratch database only.
 //
-//	GROUPS_TEST_DB_URI=postgres://postgres:test@localhost:5433/de?sslmode=disable go test ./store/pgstore/
+//	GROUPS_TEST_DB_DESTROYS_GROUPS=yes \
+//	GROUPS_TEST_DB_URI=postgres://postgres:test@localhost:5433/de?sslmode=disable \
+//	  go test ./store/pgstore/
+//
+// The acknowledgement is separate from the URI on purpose. Setting the URI is
+// the convenient thing to do while working against a running deployment, and
+// nothing about it says the suite will empty the groups tables -- which it has
+// done to a live cluster, twice, silently invalidating whatever was being
+// checked at the time.
 func testStore(t *testing.T) *Store {
 	t.Helper()
 
@@ -24,10 +33,25 @@ func testStore(t *testing.T) *Store {
 	if uri == "" {
 		t.Skip("GROUPS_TEST_DB_URI is not set")
 	}
+	if os.Getenv("GROUPS_TEST_DB_DESTROYS_GROUPS") != "yes" {
+		t.Fatal("refusing to run: this suite deletes every group in the target database. " +
+			"Set GROUPS_TEST_DB_DESTROYS_GROUPS=yes to confirm the database is disposable.")
+	}
 
 	s, err := Open(t.Context(), Config{URI: uri})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, s.Close()) })
+
+	// A group carrying legacy_name came from a Grouper import, which no test
+	// performs -- so the target is a real deployment's database rather than a
+	// scratch one, and the acknowledgement was given for the wrong database.
+	var imported int
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM groups WHERE legacy_name IS NOT NULL`).Scan(&imported))
+	if imported > 0 {
+		t.Fatalf("refusing to run: %d imported groups are present, so this is not a scratch "+
+			"database. Deleting them would discard data the tests cannot recreate.", imported)
+	}
 
 	// Group data is rebuilt per test. Deleting the group subjects cascades to
 	// groups, membership, and the closure.
