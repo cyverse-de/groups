@@ -19,20 +19,38 @@ type StatusResponse struct {
 }
 
 // StatusHandler reports basic service information and backend connectivity, and
-// serves as the liveness/readiness probe target.
+// serves as the liveness/readiness probe target: a failed database ping answers
+// 503 so the pod leaves rotation. A failed Keycloak ping stays 200, because the
+// service can serve most reads without it -- only names and emails degrade.
 //
 //	@Summary	Service information
-//	@Description	Returns the service name, version, and backend connectivity.
+//	@Description	Returns the service name, version, and backend connectivity. Responds 503 when the database is unreachable.
 //	@Produce	json
 //	@Success	200	{object}	StatusResponse
+//	@Failure	503	{object}	StatusResponse
 //	@Router	/ [get]
 func (a *App) StatusHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	return c.JSON(http.StatusOK, &StatusResponse{
+	dbErr := a.store.Ping(ctx)
+	if dbErr != nil {
+		log.WithField("context", "status").
+			Errorf("database ping failed; no group request can be served until it recovers (check db.uri and database health): %s", dbErr)
+	}
+	kcErr := a.userinfo.Ping(ctx)
+	if kcErr != nil {
+		log.WithField("context", "status").
+			Warnf("keycloak ping failed; member names and emails will be degraded (check keycloak.* settings and connectivity): %s", kcErr)
+	}
+
+	code := http.StatusOK
+	if dbErr != nil {
+		code = http.StatusServiceUnavailable
+	}
+	return c.JSON(code, &StatusResponse{
 		Service:  serviceName,
 		Version:  version,
-		Database: a.store.Ping(ctx) == nil,
-		Keycloak: a.userinfo.Ping(ctx) == nil,
+		Database: dbErr == nil,
+		Keycloak: kcErr == nil,
 	})
 }

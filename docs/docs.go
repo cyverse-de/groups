@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/": {
             "get": {
-                "description": "Returns the service name, version, and backend connectivity.",
+                "description": "Returns the service name, version, and backend connectivity. Responds 503 when the database is unreachable.",
                 "produces": [
                     "application/json"
                 ],
@@ -25,6 +25,12 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.StatusResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/main.StatusResponse"
                         }
