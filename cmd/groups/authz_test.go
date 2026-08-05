@@ -167,10 +167,15 @@ func TestListMembersPublicGroup(t *testing.T) {
 			assert.Equal(t, tt.want, rec.Code)
 
 			var body struct {
-				Members []model.Subject `json:"members"`
+				Members  []model.Subject `json:"members"`
+				Redacted bool            `json:"redacted"`
 			}
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 			assert.Len(t, body.Members, tt.wantMembers)
+			// A machine caller must be able to tell a withheld list from an
+			// empty group; group-propagator wipes iRODS ACLs if it cannot.
+			assert.Equal(t, !tt.membersPublic, body.Redacted,
+				"the redaction marker must distinguish withheld from empty")
 		})
 	}
 }

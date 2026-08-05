@@ -20,6 +20,12 @@ const maxBulkMembers = 1000
 // membersResponse wraps a list of group members.
 type membersResponse struct {
 	Members []model.Subject `json:"members"`
+	// Redacted marks a member list withheld because the group is public but
+	// its membership is not. Without it an empty list is indistinguishable
+	// from a genuinely empty group, and a service that reconciles state from
+	// this endpoint -- group-propagator replaces iRODS ACLs from it -- treats
+	// the redaction as truth and deletes every member.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // membersRequest is the body for bulk membership operations.
@@ -63,7 +69,7 @@ func (a *App) GetMembersHandler(c echo.Context) error {
 	case membersRedacted:
 		// Public, but its membership is not. Grouper answered this with an empty
 		// list rather than an error, and the DE's team page depends on it.
-		return c.JSON(http.StatusOK, &membersResponse{Members: []model.Subject{}})
+		return c.JSON(http.StatusOK, &membersResponse{Members: []model.Subject{}, Redacted: true})
 	}
 
 	ctx := c.Request().Context()
