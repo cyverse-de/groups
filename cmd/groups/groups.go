@@ -311,12 +311,13 @@ func (a *App) UpdateGroupHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, updated)
 }
 
-// DeleteGroupHandler handles DELETE /groups/:id.
+// DeleteGroupHandler handles DELETE /groups/:id. Deleting a group that does
+// not exist succeeds, so the operation is idempotent; a caller without admin on
+// the group still fails the level check.
 //
 //	@Summary	Delete a group
 //	@Param	id	path	string	true	"Group identifier"
 //	@Success	200
-//	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id} [delete]
 func (a *App) DeleteGroupHandler(c echo.Context) error {
 	groupID := c.Param("id")

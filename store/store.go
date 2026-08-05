@@ -90,6 +90,9 @@ type Tx interface {
 
 	CreateGroup(ctx context.Context, spec model.GroupSpec) (*model.Group, error)
 	UpdateGroup(ctx context.Context, id string, upd model.GroupUpdate) (*model.Group, error)
+
+	// DeleteGroup removes the group, its membership, and every permission
+	// granted to it. Deleting a group that does not exist succeeds.
 	DeleteGroup(ctx context.Context, id string) error
 
 	// AddMembers adds each subject to the group. A subject ID that names an

@@ -200,19 +200,10 @@ func (t *tx) UpdateGroup(ctx context.Context, id string, upd model.GroupUpdate) 
 // DeleteGroup removes the group by deleting its subject row, which cascades to
 // the group, its membership, and any permission granted to it. The BEFORE DELETE
 // trigger on groups detaches it from any group containing it and repairs their
-// effective membership first.
+// effective membership first. Deleting a group that does not exist succeeds, so
+// the operation is idempotent.
 func (t *tx) DeleteGroup(ctx context.Context, id string) error {
-	res, err := t.tx.ExecContext(ctx,
+	_, err := t.tx.ExecContext(ctx,
 		`DELETE FROM subjects WHERE subject_id = $1 AND subject_type = 'group'`, id)
-	if err != nil {
-		return translateErr(err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return translateErr(err)
-	}
-	if affected == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return translateErr(err)
 }

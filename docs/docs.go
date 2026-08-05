@@ -297,15 +297,6 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK"
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
                     }
                 }
             }
@@ -710,15 +701,6 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
                     }
                 }
             }
@@ -936,6 +918,14 @@ const docTemplate = `{
                 "group_type": {
                     "type": "string"
                 },
+                "joinable": {
+                    "description": "Joinable lets a user add themselves without approval. Distinct from\nMembersPublic: Grouper's ` + "`" + `optins` + "`" + ` rather than ` + "`" + `readers` + "`" + `.",
+                    "type": "boolean"
+                },
+                "members_public": {
+                    "description": "MembersPublic makes a public group's member list public too. Meaningless\nunless the group is also granted read to the public subject.",
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -952,6 +942,12 @@ const docTemplate = `{
                 },
                 "display_name": {
                     "type": "string"
+                },
+                "joinable": {
+                    "type": "boolean"
+                },
+                "members_public": {
+                    "type": "boolean"
                 },
                 "name": {
                     "type": "string"
@@ -1008,6 +1004,10 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/model.Subject"
                     }
+                },
+                "redacted": {
+                    "description": "Redacted marks a member list withheld because the group is public but\nits membership is not. Without it an empty list is indistinguishable\nfrom a genuinely empty group, and a service that reconciles state from\nthis endpoint -- group-propagator replaces iRODS ACLs from it -- treats\nthe redaction as truth and deletes every member.",
+                    "type": "boolean"
                 }
             }
         },
@@ -1059,6 +1059,14 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "joinable": {
+                    "description": "Joinable reports whether a user may add themselves without approval.\nGrouper's ` + "`" + `optins` + "`" + ` for GrouperAll, as opposed to ` + "`" + `readers` + "`" + `; the two\ncoincide in current data but mean different things.",
+                    "type": "boolean"
+                },
+                "members_public": {
+                    "description": "MembersPublic reports whether a public group's member list is public too.\nGrouper's ` + "`" + `readers` + "`" + ` privilege for GrouperAll as opposed to ` + "`" + `viewers` + "`" + `; it\nmeans nothing unless the group carries a read grant to GrouperAll.",
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -1073,6 +1081,10 @@ const docTemplate = `{
         "model.Subject": {
             "type": "object",
             "properties": {
+                "description": {
+                    "description": "Description is set only for group subjects, matching what Grouper\nreturned for them; users have none.",
+                    "type": "string"
+                },
                 "email": {
                     "type": "string"
                 },

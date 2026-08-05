@@ -192,7 +192,7 @@ func TestUpdateAndDelete(t *testing.T) {
 		}))
 	})
 
-	t.Run("delete removes the group and reports a second delete", func(t *testing.T) {
+	t.Run("delete removes the group and a second delete is idempotent", func(t *testing.T) {
 		g := mustCreate(t, s, collabList("test-dave", "doomed"))
 		require.NoError(t, s.WithTx(t.Context(), func(tx store.Tx) error {
 			return tx.DeleteGroup(t.Context(), g.ID)
@@ -204,7 +204,7 @@ func TestUpdateAndDelete(t *testing.T) {
 		err = s.WithTx(t.Context(), func(tx store.Tx) error {
 			return tx.DeleteGroup(t.Context(), g.ID)
 		})
-		assert.ErrorIs(t, err, store.ErrNotFound)
+		assert.NoError(t, err, "deleting an absent group must succeed silently")
 	})
 }
 

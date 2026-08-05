@@ -89,7 +89,9 @@ func TestGrantPermissionForbiddenWithoutAdmin(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
-func TestRevokePermissionNotFound(t *testing.T) {
+// Revoking a permission that does not exist succeeds: DELETE is idempotent,
+// and the caller's intent -- the subject holds nothing -- is already true.
+func TestRevokePermissionOfAbsentGrantSucceeds(t *testing.T) {
 	perms := &mockPermissions{
 		checkFn: allowAllCheck(),
 		revokeFn: func(_ context.Context, _, _, _, _ string) error {
@@ -99,7 +101,7 @@ func TestRevokePermissionNotFound(t *testing.T) {
 	app := newTestAppWith(&mockStore{}, perms)
 
 	rec := doRequest(app, http.MethodDelete, "/groups/g1/permissions/user/bob", "")
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestRevokePermission(t *testing.T) {

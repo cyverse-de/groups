@@ -103,6 +103,8 @@ func (a *App) GrantPermissionHandler(c echo.Context) error {
 }
 
 // RevokePermissionHandler handles DELETE /groups/:id/permissions/:subject-type/:subject-id.
+// Revoking a permission that does not exist succeeds, so the operation is
+// idempotent.
 //
 //	@Summary	Revoke a subject's permission on a group
 //	@Param	id	path	string	true	"Group UUID"
@@ -110,7 +112,6 @@ func (a *App) GrantPermissionHandler(c echo.Context) error {
 //	@Param	subject-id	path	string	true	"Subject identifier"
 //	@Success	200
 //	@Failure	403	{object}	map[string]string
-//	@Failure	404	{object}	map[string]string
 //	@Router	/groups/{id}/permissions/{subject-type}/{subject-id} [delete]
 func (a *App) RevokePermissionHandler(c echo.Context) error {
 	groupID := c.Param("id")
@@ -123,10 +124,8 @@ func (a *App) RevokePermissionHandler(c echo.Context) error {
 		return err
 	}
 
-	if err := a.permissions.Revoke(c.Request().Context(), resourceTypeGroup, groupID, subjectType, subjectID); err != nil {
-		if errors.Is(err, permissions.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "no such permission")
-		}
+	err = a.permissions.Revoke(c.Request().Context(), resourceTypeGroup, groupID, subjectType, subjectID)
+	if err != nil && !errors.Is(err, permissions.ErrNotFound) {
 		return err
 	}
 
