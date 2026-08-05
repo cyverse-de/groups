@@ -22,7 +22,7 @@ type mockStore struct {
 	listGroupsFn        func(ctx context.Context, f store.ListFilter) ([]model.Group, error)
 	listMembersFn       func(ctx context.Context, groupID string) ([]model.MemberRef, error)
 	isEffectiveMemberFn func(ctx context.Context, groupID, username string) (bool, error)
-	groupsForSubjectFn  func(ctx context.Context, username, groupType string) ([]model.Group, error)
+	groupsForSubjectFn  func(ctx context.Context, username, groupType, visibleTo string) ([]model.Group, error)
 	existingSubjectsFn  func(ctx context.Context, ids []string) ([]string, error)
 
 	createGroupFn    func(ctx context.Context, spec model.GroupSpec) (*model.Group, error)
@@ -97,9 +97,9 @@ func (m *mockStore) IsEffectiveMember(ctx context.Context, groupID, username str
 	return false, nil
 }
 
-func (m *mockStore) GroupsForSubject(ctx context.Context, username, groupType string) ([]model.Group, error) {
+func (m *mockStore) GroupsForSubject(ctx context.Context, username, groupType, visibleTo string) ([]model.Group, error) {
 	if m.groupsForSubjectFn != nil {
-		return m.groupsForSubjectFn(ctx, username, groupType)
+		return m.groupsForSubjectFn(ctx, username, groupType, visibleTo)
 	}
 	return []model.Group{}, nil
 }

@@ -333,7 +333,7 @@ func TestNesting(t *testing.T) {
 	})
 
 	t.Run("GroupsForSubject reports containers reached through nesting", func(t *testing.T) {
-		groups, err := s.GroupsForSubject(t.Context(), "test-carol", "")
+		groups, err := s.GroupsForSubject(t.Context(), "test-carol", "", "")
 		require.NoError(t, err)
 
 		ids := make([]string, 0, len(groups))
@@ -342,7 +342,7 @@ func TestNesting(t *testing.T) {
 		}
 		assert.ElementsMatch(t, []string{team.ID, list.ID}, ids)
 
-		filtered, err := s.GroupsForSubject(t.Context(), "test-carol", model.GroupTypeTeam)
+		filtered, err := s.GroupsForSubject(t.Context(), "test-carol", model.GroupTypeTeam, "")
 		require.NoError(t, err)
 		require.Len(t, filtered, 1)
 		assert.Equal(t, team.ID, filtered[0].ID)

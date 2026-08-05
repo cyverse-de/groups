@@ -10,6 +10,7 @@ import (
 	"github.com/cyverse-de/groups/store"
 	"github.com/cyverse-de/groups/userinfo"
 	"github.com/labstack/echo/v4"
+	"github.com/sirupsen/logrus"
 )
 
 // maxListLimit caps how many groups one listing may return, so a caller that
@@ -58,7 +59,11 @@ func storeError(err error) error {
 		// member that does not exist. A 404 here would read as "no such group".
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	default:
-		return err
+		// Anything unrecognized is an internal fault: a driver message, or a
+		// downstream service's response body. Log it and tell the client
+		// nothing about the schema or the topology.
+		log.WithFields(logrus.Fields{"error": err.Error()}).Error("unhandled store error")
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal error")
 	}
 }
 
@@ -83,7 +88,10 @@ func (a *App) ListGroupsHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if limit > maxListLimit {
+	// 0 means unset, not unbounded: the store omits the LIMIT clause entirely
+	// for 0, so accepting it as a literal returns the whole table -- exactly
+	// what the cap exists to prevent.
+	if limit <= 0 || limit > maxListLimit {
 		limit = maxListLimit
 	}
 
@@ -137,6 +145,12 @@ func (a *App) LookupGroupHandler(c echo.Context) error {
 	g, err := a.store.LookupGroup(c.Request().Context(), ref)
 	if err != nil {
 		return storeError(err)
+	}
+	// Resolving by identity is still a read of the group. Without this, the
+	// naming scheme is public enough to walk -- collaborator_list/<user>/default
+	// -- and it discloses the 32-hex id iRODS names the group from.
+	if err := a.requireReadOrMember(c, g.ID); err != nil {
+		return err
 	}
 	return c.JSON(http.StatusOK, g)
 }
@@ -214,8 +228,16 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 		}
 		created = g
 
+		// The grant goes to the owner, not the caller. When a service account
+		// creates a group on a user's behalf the two differ, and granting the
+		// caller leaves the owner unable to see or manage their own group --
+		// `owner` is a frozen namespace segment, not an authorization input.
+		grantee := owner
+		if grantee == "" {
+			grantee = user
+		}
 		return a.permissions.Grant(ctx, resourceTypeGroup, g.ID,
-			permissions.SubjectTypeUser, user, permissions.LevelOwn)
+			permissions.SubjectTypeUser, grantee, permissions.LevelOwn)
 	})
 	if err != nil {
 		return storeError(err)
@@ -241,7 +263,7 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 //	@Router	/groups/{id} [put]
 func (a *App) UpdateGroupHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 
@@ -285,7 +307,7 @@ func (a *App) UpdateGroupHandler(c echo.Context) error {
 //	@Router	/groups/{id} [delete]
 func (a *App) DeleteGroupHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelOwn); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 

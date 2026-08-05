@@ -61,10 +61,10 @@ func TestCreateGroupRollsBackOnGrantFailure(t *testing.T) {
 		"the transaction must not commit when the owner grant fails")
 }
 
-func TestUpdateGroupForbiddenWithoutWrite(t *testing.T) {
+func TestUpdateGroupForbiddenWithoutAdmin(t *testing.T) {
 	perms := &mockPermissions{
 		checkFn: func(_ context.Context, _, _, _, _, minLevel string, _ bool) (bool, error) {
-			assert.Equal(t, permissions.LevelWrite, minLevel)
+			assert.Equal(t, permissions.LevelAdmin, minLevel)
 			return false, nil
 		},
 	}
@@ -314,4 +314,43 @@ func TestMembershipCheckErrorIsNotADenial(t *testing.T) {
 
 	rec := doRequestAs(app, http.MethodGet, "/groups/g1", "", "carol")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// Grouper's `admins` privilege meant "may administer this group": add and
+// remove members, grant and revoke privileges, rename, delete. The importer
+// maps it to the `admin` permission level, and terrain shows those holders as
+// team admins.
+//
+// The DE's level precedence is own=0, write=1, admin=2, read=3 -- `admin` sits
+// BELOW write. So requiring write or own for group management locks out every
+// co-admin the UI says is one: they are listed as admins and 403 on every
+// admin action.
+func TestAdminLevelCanAdministerGroup(t *testing.T) {
+	routes := []struct {
+		name, method, path, body string
+	}{
+		{"add members", http.MethodPost, "/groups/g1/members", `{"members":["carol"]}`},
+		{"remove members", http.MethodDelete, "/groups/g1/members", `{"members":["carol"]}`},
+		{"replace members", http.MethodPut, "/groups/g1/members", `{"members":["carol"]}`},
+		{"update the group", http.MethodPut, "/groups/g1", `{"name":"Renamed"}`},
+		{"grant a privilege", http.MethodPut, "/groups/g1/permissions/user/dave", `{"level":"read"}`},
+		{"revoke a privilege", http.MethodDelete, "/groups/g1/permissions/user/dave", ``},
+	}
+
+	for _, r := range routes {
+		t.Run(r.name, func(t *testing.T) {
+			// The subject holds exactly `admin` and nothing stronger: the check
+			// passes only if it asks for a level admin satisfies.
+			perms := &mockPermissions{
+				checkFn: func(_ context.Context, _, _, _, _, minLevel string, _ bool) (bool, error) {
+					return minLevel == permissions.LevelAdmin || minLevel == permissions.LevelRead, nil
+				},
+			}
+			app := newTestAppWith(&mockStore{}, perms)
+
+			rec := doRequestAs(app, r.method, r.path, r.body, "bob")
+			assert.NotEqual(t, http.StatusForbidden, rec.Code,
+				"an admin-level holder must be able to %s", r.name)
+		})
+	}
 }

@@ -114,21 +114,17 @@ func (r *reader) ListGroups(ctx context.Context, f store.ListFilter) ([]model.Gr
 // GroupsForSubject returns the groups a user belongs to, through any depth of
 // nesting. Effective rather than direct membership, matching what Grouper
 // reported and what permission lookup expands.
-func (r *reader) GroupsForSubject(ctx context.Context, username, groupType string) ([]model.Group, error) {
-	query := `SELECT ` + groupColumns + `
-		FROM group_effective_members em
-		JOIN subjects ms ON ms.id = em.member_id
-		JOIN groups g    ON g.subject_id = em.group_id
-		JOIN subjects s  ON s.id = g.subject_id
-		WHERE ms.subject_id = $1
-		  AND ($2 = '' OR g.group_type = $2)
-		ORDER BY g.group_type, g.owner NULLS FIRST, g.name`
-
-	rows, err := r.q.QueryContext(ctx, query, username, groupType)
-	if err != nil {
-		return nil, translateErr(err)
-	}
-	return scanGroups(rows)
+//
+// It delegates to ListGroups rather than running its own query so the
+// visibility rule cannot drift from the one on /groups: a second copy of that
+// predicate is a second place for it to be wrong, and this endpoint leaked a
+// user's whole membership when it had none.
+func (r *reader) GroupsForSubject(ctx context.Context, username, groupType, visibleTo string) ([]model.Group, error) {
+	return r.ListGroups(ctx, store.ListFilter{
+		Member:    username,
+		GroupType: groupType,
+		VisibleTo: visibleTo,
+	})
 }
 
 // CreateGroup inserts the group's subject row and the group itself. The subject

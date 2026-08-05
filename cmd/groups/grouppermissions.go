@@ -75,7 +75,7 @@ func (a *App) ListPermissionsHandler(c echo.Context) error {
 //	@Router	/groups/{id}/permissions/{subject-type}/{subject-id} [put]
 func (a *App) GrantPermissionHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelOwn); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 
@@ -114,7 +114,7 @@ func (a *App) GrantPermissionHandler(c echo.Context) error {
 //	@Router	/groups/{id}/permissions/{subject-type}/{subject-id} [delete]
 func (a *App) RevokePermissionHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelOwn); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 

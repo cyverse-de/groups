@@ -90,8 +90,16 @@ func (a *App) GetSubjectHandler(c echo.Context) error {
 //	@Success	200	{object}	groupListResponse
 //	@Router	/subjects/{subject-id}/groups [get]
 func (a *App) SubjectGroupsHandler(c echo.Context) error {
+	// Filtered by what the caller may see, as Grouper's own subject-groups
+	// query was: without it any user can enumerate another user's entire
+	// membership, private collaborator lists included.
+	visibleTo := actingUser(c)
+	if a.isAdminUser(visibleTo) {
+		visibleTo = ""
+	}
+
 	groups, err := a.store.GroupsForSubject(c.Request().Context(),
-		c.Param("subject-id"), c.QueryParam("group_type"))
+		c.Param("subject-id"), c.QueryParam("group_type"), visibleTo)
 	if err != nil {
 		return storeError(err)
 	}

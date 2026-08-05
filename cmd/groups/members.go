@@ -141,7 +141,7 @@ func (a *App) groupSubject(ctx context.Context, groupID string) model.Subject {
 //	@Router	/groups/{id}/members [post]
 func (a *App) AddMembersHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 
@@ -172,7 +172,7 @@ func (a *App) AddMembersHandler(c echo.Context) error {
 //	@Router	/groups/{id}/members/deleter [post]
 func (a *App) RemoveMembersHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 
@@ -202,7 +202,7 @@ func (a *App) RemoveMembersHandler(c echo.Context) error {
 //	@Router	/groups/{id}/members [put]
 func (a *App) ReplaceMembersHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 
@@ -234,7 +234,7 @@ func (a *App) ReplaceMembersHandler(c echo.Context) error {
 //	@Router	/groups/{id}/members/{subject} [put]
 func (a *App) AddMemberHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 
@@ -265,7 +265,7 @@ func (a *App) AddMemberHandler(c echo.Context) error {
 //	@Router	/groups/{id}/members/{subject} [delete]
 func (a *App) RemoveMemberHandler(c echo.Context) error {
 	groupID := c.Param("id")
-	if err := a.requireLevel(c, groupID, permissions.LevelWrite); err != nil {
+	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 

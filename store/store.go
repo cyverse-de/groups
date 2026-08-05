@@ -72,9 +72,10 @@ type Reader interface {
 	// depth of nesting.
 	IsEffectiveMember(ctx context.Context, groupID, username string) (bool, error)
 
-	// GroupsForSubject returns the groups a user belongs to, through any depth of
-	// nesting. An empty groupType returns every type.
-	GroupsForSubject(ctx context.Context, username, groupType string) ([]model.Group, error)
+	// GroupsForSubject returns the groups a user belongs to. visibleTo restricts
+	// the result to groups that caller may read, on the same rule as ListGroups;
+	// empty means no filtering, for the administrative accounts.
+	GroupsForSubject(ctx context.Context, username, groupType, visibleTo string) ([]model.Group, error)
 
 	// ExistingSubjects returns the subset of the given identifiers that already
 	// have a subject row, in unspecified order. Callers use it to find the

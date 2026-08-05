@@ -76,10 +76,10 @@ func TestGrantPermissionRejectsInvalidSubjectType(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestGrantPermissionForbiddenWithoutOwn(t *testing.T) {
+func TestGrantPermissionForbiddenWithoutAdmin(t *testing.T) {
 	perms := &mockPermissions{
 		checkFn: func(_ context.Context, _, _, _, _, minLevel string, _ bool) (bool, error) {
-			assert.Equal(t, permissions.LevelOwn, minLevel)
+			assert.Equal(t, permissions.LevelAdmin, minLevel)
 			return false, nil
 		},
 	}

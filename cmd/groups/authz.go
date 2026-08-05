@@ -51,6 +51,12 @@ func (a *App) isAdminUser(user string) bool {
 
 // requireLevel ensures the acting user holds at least minLevel on the group,
 // returning a 403 error otherwise.
+//
+// Group management asks for `admin`, not `write` or `own`. The DE's level
+// precedence is own=0, write=1, admin=2, read=3, so `admin` sits BELOW write:
+// asking for write locks out every co-admin, who are exactly the subjects
+// Grouper's `admins` privilege produced and whom terrain lists as team admins.
+// `own` still passes, being stronger.
 func (a *App) requireLevel(c echo.Context, groupID, minLevel string) error {
 	if a.isAdminUser(actingUser(c)) {
 		return nil

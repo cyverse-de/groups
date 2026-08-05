@@ -65,7 +65,7 @@ func TestLookupSubjectsSkipsMissing(t *testing.T) {
 func TestSubjectGroups(t *testing.T) {
 	t.Run("returns the subject's groups", func(t *testing.T) {
 		app := newTestApp(&mockStore{
-			groupsForSubjectFn: func(_ context.Context, username, groupType string) ([]model.Group, error) {
+			groupsForSubjectFn: func(_ context.Context, username, groupType, _ string) ([]model.Group, error) {
 				assert.Equal(t, "jdoe", username)
 				assert.Empty(t, groupType)
 				return []model.Group{{ID: "g1", GroupType: model.GroupTypeTeam, Name: "Ecology"}}, nil
@@ -83,7 +83,7 @@ func TestSubjectGroups(t *testing.T) {
 
 	t.Run("passes the group type filter through", func(t *testing.T) {
 		app := newTestApp(&mockStore{
-			groupsForSubjectFn: func(_ context.Context, _, groupType string) ([]model.Group, error) {
+			groupsForSubjectFn: func(_ context.Context, _, groupType, _ string) ([]model.Group, error) {
 				assert.Equal(t, model.GroupTypeCommunity, groupType)
 				return nil, nil
 			},
@@ -99,4 +99,35 @@ func TestSubjectsRequireUser(t *testing.T) {
 
 	rec := doRequestAs(app, http.MethodGet, "/subjects/jdoe", "", "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// A subject's group listing is filtered by what the caller may see, exactly as
+// /groups is. Grouper's equivalent query returned nothing to an unrelated user;
+// leaving this one unfiltered lets anybody enumerate another user's entire
+// membership, private collaborator lists included.
+func TestSubjectGroupsFiltersByActingUser(t *testing.T) {
+	tests := []struct {
+		name, user, wantVisibleTo string
+	}{
+		{name: "an ordinary caller is filtered", user: "alice", wantVisibleTo: "alice"},
+		{name: "an admin service account is not", user: "permissions-svc", wantVisibleTo: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			s := &mockStore{
+				groupsForSubjectFn: func(_ context.Context, _, _, visibleTo string) ([]model.Group, error) {
+					got = visibleTo
+					return nil, nil
+				},
+			}
+			app := newTestAppWith(s, &mockPermissions{})
+			app.adminUsers = map[string]struct{}{"permissions-svc": {}}
+
+			rec := doRequestAs(app, http.MethodGet, "/subjects/bob/groups", "", tt.user)
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, tt.wantVisibleTo, got)
+		})
+	}
 }
