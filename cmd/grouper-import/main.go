@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/cyverse-de/groups/store/pgstore"
@@ -70,7 +71,11 @@ func configFromArgs() (*config, error) {
 		"base URL of the permissions service")
 	fs.StringVar(&cfg.Phase, "phase", env("PHASE", phaseAll),
 		"which half to run: groups, permissions, or all")
-	fs.BoolVar(&cfg.DryRun, "dry-run", env("DRY_RUN", "") != "",
+	dryRun, err := envBool("DRY_RUN")
+	if err != nil {
+		return nil, err
+	}
+	fs.BoolVar(&cfg.DryRun, "dry-run", dryRun,
 		"report what would change without writing anything")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -88,4 +93,20 @@ func env(name, def string) string {
 		return strings.TrimSpace(v)
 	}
 	return def
+}
+
+// envBool reads a namespaced boolean environment variable with ParseBool
+// semantics, so "false" and "0" disable rather than counting as set. An
+// unparsable value is an error: guessing either way on a dry-run flag is worse
+// than refusing to start.
+func envBool(name string) (bool, error) {
+	v := env(name, "")
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s%s must be a boolean (true/false/1/0), not %q", envPrefix, name, v)
+	}
+	return b, nil
 }

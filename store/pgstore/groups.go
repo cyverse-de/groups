@@ -190,7 +190,11 @@ func (t *tx) UpdateGroup(ctx context.Context, id string, upd model.GroupUpdate) 
 	if err != nil {
 		return nil, translateErr(err)
 	}
-	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, translateErr(err)
+	}
+	if affected == 0 {
 		return nil, store.ErrNotFound
 	}
 

@@ -206,7 +206,7 @@ func importGroups(ctx context.Context, cfg *config, source *grouperSource, tgt *
 			len(unparsed), strings.Join(unparsed, "\n  "))
 	}
 
-	memberCounts, err := source.MemberCounts(ctx)
+	memberCounts, err := source.MemberCounts(ctx, grouperAdminUser)
 	if err != nil {
 		return nil, err
 	}

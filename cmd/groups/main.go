@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/cyverse-de/go-mod/cfg"
 	"github.com/cyverse-de/go-mod/logging"
@@ -44,13 +46,23 @@ func main() {
 	if err != nil {
 		l.Fatal(err)
 	}
-	defer func() {
-		if err := app.Close(); err != nil {
-			l.Errorf("error releasing resources on shutdown: %s", err)
-		}
-	}()
 
 	addr := fmt.Sprintf(":%d", *listenPort)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: app.Router(),
+		// Bounds how long a client may dribble request headers, so idle
+		// half-open connections cannot pin goroutines.
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+
 	l.Infof("listening on %s", addr)
-	l.Fatal(http.ListenAndServe(addr, app.Router()))
+	// ListenAndServe never returns nil. l.Fatal would os.Exit before any
+	// cleanup ran, so log, release resources, and exit nonzero explicitly.
+	err = srv.ListenAndServe()
+	l.Errorf("the HTTP server stopped: %s", err)
+	if closeErr := app.Close(); closeErr != nil {
+		l.Errorf("error releasing resources on shutdown: %s", closeErr)
+	}
+	os.Exit(1)
 }

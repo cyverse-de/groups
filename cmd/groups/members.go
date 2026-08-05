@@ -129,7 +129,16 @@ func (a *App) hydrateMembers(ctx context.Context, refs []model.MemberRef) ([]mod
 func (a *App) groupSubject(ctx context.Context, groupID string) model.Subject {
 	s := model.Subject{ID: groupID, Name: groupID, SourceID: model.SourceGroup}
 	g, err := a.store.GetGroup(ctx, groupID)
-	if err == nil {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// A membership row pointing at a group with no groups row is a dangling
+		// reference, which the schema is supposed to prevent.
+		log.WithField("context", "membership").
+			Warnf("nested group %s is a member but does not exist; its bare identifier is reported instead of a name", groupID)
+	case err != nil:
+		log.WithField("context", "membership").
+			Warnf("could not resolve the name of nested group %s; its bare identifier is reported instead: %s", groupID, err)
+	default:
 		s.Name = g.Name
 	}
 	return s

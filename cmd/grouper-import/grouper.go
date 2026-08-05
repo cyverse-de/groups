@@ -66,13 +66,12 @@ func (g *grouperSource) Groups(ctx context.Context) ([]grouperGroup, error) {
 	return groups, rows.Err()
 }
 
-// grouperMember is one direct membership.
+// grouperMember is one direct membership. The member may be a nested group --
+// production has 152 of those -- but the store resolves that from the subject
+// identifier itself, so it is not distinguished here.
 type grouperMember struct {
 	GroupName string
 	SubjectID string
-	// IsGroup reports a nested group rather than a user. Production has 152 of
-	// these, so nesting must survive the import.
-	IsGroup bool
 }
 
 // Members returns direct group membership.
@@ -105,9 +104,7 @@ func (g *grouperSource) Members(ctx context.Context, grouperAdminUser string) ([
 			return nil, fmt.Errorf("could not read a Grouper membership: %w", err)
 		}
 		switch source {
-		case sourceLDAP:
-		case sourceGroup:
-			m.IsGroup = true
+		case sourceLDAP, sourceGroup:
 		default:
 			// Abort rather than guess: a source we have not seen could be a user
 			// or a group, and choosing wrong silently corrupts membership.
@@ -148,14 +145,18 @@ func (g *grouperSource) EffectiveMembers(ctx context.Context, grouperAdminUser s
 
 // MemberCounts returns the number of direct members per group name, used to
 // decide which side of an identity collision carries anything worth keeping.
-func (g *grouperSource) MemberCounts(ctx context.Context) (map[string]int, error) {
+// The Grouper service account is excluded the same way Members excludes it: a
+// colliding group whose only member is the service account is empty for
+// tiebreak purposes.
+func (g *grouperSource) MemberCounts(ctx context.Context, grouperAdminUser string) (map[string]int, error) {
 	rows, err := g.db.QueryContext(ctx, `
 		SELECT group_name, count(DISTINCT subject_id)
 		  FROM grouper_memberships_v
 		 WHERE group_name LIKE $1
 		   AND list_name = 'members'
 		   AND membership_type = 'immediate'
-		 GROUP BY group_name`, g.scope())
+		   AND subject_id <> $2
+		 GROUP BY group_name`, g.scope(), grouperAdminUser)
 	if err != nil {
 		return nil, fmt.Errorf("could not count Grouper membership: %w", err)
 	}

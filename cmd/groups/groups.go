@@ -192,7 +192,8 @@ func (a *App) GetGroupHandler(c echo.Context) error {
 // The group and the owner's permission grant are made atomic by holding the
 // transaction open across the grant: the grant is an HTTP call to the
 // permissions service, so committing first would leave an ownerless,
-// unmanageable group behind whenever it failed.
+// unmanageable group behind whenever it failed. The permissions client's HTTP
+// timeout bounds how long the transaction can be held open.
 //
 //	@Summary	Create a group
 //	@Accept	json

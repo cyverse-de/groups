@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // report accumulates what a run did. Every counter prints even when zero: a run
@@ -81,11 +81,13 @@ func readCommunities(ctx context.Context, db *sql.DB, schema string) (communityI
 		byName:       map[string]string{},
 	}
 
+	// The schema name cannot be a placeholder, so quote it as an identifier.
+	ident := pq.QuoteIdentifier(schema)
 	query := fmt.Sprintf(`
 		SELECT s.subject_id, g.name, coalesce(g.legacy_name, '')
 		  FROM %s.groups g
 		  JOIN %s.subjects s ON s.id = g.subject_id
-		 WHERE g.group_type = 'community'`, schema, schema)
+		 WHERE g.group_type = 'community'`, ident, ident)
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
