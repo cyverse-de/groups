@@ -64,9 +64,12 @@ spec:
           ports:
             - name: listen-port
               containerPort: 60000
+          # Liveness deliberately does not touch the database: / answers 503
+          # while it is unreachable, so probing it would restart every replica
+          # during a database outage rather than let them serve again with it.
           livenessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: 60000
             initialDelaySeconds: 5
             periodSeconds: 5

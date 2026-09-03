@@ -7,9 +7,19 @@
 # in the permissions schema of the DE database, alongside the tables the
 # permissions service owns. The schema is applied as a connection-level
 # search_path, so it does not need to be set in the URI.
+#
+# The connection-pool settings are optional; each falls back to the default
+# shown when it is absent. Creating a group holds its transaction open across an
+# HTTP call to the permissions service, so max-open-conns also bounds how many
+# slow creates can occupy the pool at once. conn-max-lifetime recycles
+# connections, which is how a rotated credential or a failed-over primary is
+# picked up without a restart -- set it as a duration, not a bare number.
 db:
   uri: postgresql://de:notprod@dedb:5432/de?sslmode=disable
   schema: permissions
+  max-open-conns: 25
+  max-idle-conns: 5
+  conn-max-lifetime: 5m
 
 # Domain appended to a bare username to form the public.users.username of the
 # corresponding DE user, used to correlate a new subject with its DE user row.

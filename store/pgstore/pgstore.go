@@ -46,7 +46,24 @@ type Store struct {
 // public.users.username of the corresponding DE user.
 const DefaultUserSuffix = "@iplantcollaborative.org"
 
-// Config carries the settings needed to open the store.
+// Defaults applied to the connection pool when Config leaves a setting unset.
+const (
+	// DefaultMaxOpenConns bounds concurrent database work. Creating a group holds
+	// its transaction open across an HTTP call to the permissions service, so this
+	// also bounds how many slow creates can occupy the pool at once.
+	DefaultMaxOpenConns = 25
+
+	// DefaultMaxIdleConns is the number of connections kept ready between
+	// requests.
+	DefaultMaxIdleConns = 5
+
+	// DefaultConnMaxLifetime recycles connections so that a rotated credential or
+	// a failed-over primary is picked up without restarting the process.
+	DefaultConnMaxLifetime = 5 * time.Minute
+)
+
+// Config carries the settings needed to open the store. Each pool setting falls
+// back to its Default counterpart when left at zero.
 type Config struct {
 	URI    string
 	Schema string
@@ -84,9 +101,9 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("could not open the database: %w", err)
 	}
 
-	db.SetMaxOpenConns(orDefault(cfg.MaxOpenConns, 10))
-	db.SetMaxIdleConns(orDefault(cfg.MaxIdleConns, 5))
-	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+	db.SetMaxOpenConns(orDefault(cfg.MaxOpenConns, DefaultMaxOpenConns))
+	db.SetMaxIdleConns(orDefault(cfg.MaxIdleConns, DefaultMaxIdleConns))
+	db.SetConnMaxLifetime(orDefault(cfg.ConnMaxLifetime, DefaultConnMaxLifetime))
 
 	if err := db.PingContext(ctx); err != nil {
 		// The ping failure is the error worth reporting; a close failure on a
@@ -98,7 +115,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	return &Store{reader: &reader{q: db}, db: db, userSuffix: cfg.UserSuffix}, nil
 }
 
-func orDefault(v, def int) int {
+func orDefault[T int | time.Duration](v, def T) T {
 	if v <= 0 {
 		return def
 	}

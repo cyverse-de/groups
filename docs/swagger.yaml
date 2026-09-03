@@ -665,6 +665,14 @@ paths:
               type: string
             type: object
       summary: Look up a group by its identity
+  /healthz:
+    get:
+      description: Returns 200 whenever the process is serving requests. Backend connectivity
+        is reported by GET / instead.
+      responses:
+        "200":
+          description: OK
+      summary: Liveness check
   /subjects:
     get:
       parameters:
@@ -760,5 +768,11 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/main.subjectsResponse'
+        "413":
+          description: Too many subject IDs in one request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Look up multiple subjects by ID
 swagger: "2.0"

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/cyverse-de/go-mod/cfg"
@@ -14,6 +16,11 @@ import (
 )
 
 const serviceName = "groups"
+
+// shutdownTimeout bounds how long in-flight requests have to finish after a
+// SIGTERM. It stays under Kubernetes' 30-second default grace period, so the
+// resources released afterwards are released before the pod is killed.
+const shutdownTimeout = 20 * time.Second
 
 var log = logging.Log.WithFields(logrus.Fields{"service": serviceName})
 
@@ -42,7 +49,10 @@ func main() {
 	}
 	l.Infof("done reading config from %s", *configPath)
 
-	app, err := NewApp(context.Background(), config)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	app, err := NewApp(ctx, config)
 	if err != nil {
 		l.Fatal(err)
 	}
@@ -56,13 +66,36 @@ func main() {
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
+	served := make(chan error, 1)
+	go func() { served <- srv.ListenAndServe() }()
 	l.Infof("listening on %s", addr)
-	// ListenAndServe never returns nil. l.Fatal would os.Exit before any
-	// cleanup ran, so log, release resources, and exit nonzero explicitly.
-	err = srv.ListenAndServe()
-	l.Errorf("the HTTP server stopped: %s", err)
-	if closeErr := app.Close(); closeErr != nil {
-		l.Errorf("error releasing resources on shutdown: %s", closeErr)
+
+	failed := false
+	select {
+	case err := <-served:
+		// ListenAndServe never returns nil. l.Fatal would os.Exit before any
+		// cleanup ran, so log, release resources, and exit nonzero explicitly.
+		l.Errorf("the HTTP server stopped: %s", err)
+		failed = true
+	case <-ctx.Done():
+		// Restore the default signal handling, so a second signal can still kill
+		// a shutdown that will not finish.
+		stop()
+		l.Infof("shutting down, draining in-flight requests for up to %s", shutdownTimeout)
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			l.Errorf("the HTTP server did not shut down cleanly: %s", err)
+			failed = true
+		}
 	}
-	os.Exit(1)
+
+	if err := app.Close(); err != nil {
+		l.Errorf("error releasing resources on shutdown: %s", err)
+		failed = true
+	}
+	if failed {
+		os.Exit(1)
+	}
 }

@@ -221,6 +221,13 @@ func (a *App) AddGroupHandler(c echo.Context) error {
 	if owner != user && !a.isAdminUser(user) {
 		return echo.NewHTTPError(http.StatusForbidden, "cannot create a group owned by another user")
 	}
+	// System groups are deployment-wide -- de-users and workshop-users are the
+	// ones that exist -- and have no owning namespace to confine who may create
+	// them, so they are restricted to the trusted service accounts. Communities
+	// are deliberately open to any user.
+	if req.GroupType == model.GroupTypeSystem && !a.isAdminUser(user) {
+		return echo.NewHTTPError(http.StatusForbidden, "cannot create a system group")
+	}
 	if req.GroupType == model.GroupTypeCommunity || req.GroupType == model.GroupTypeSystem {
 		owner = ""
 	}
@@ -322,11 +329,23 @@ func (a *App) UpdateGroupHandler(c echo.Context) error {
 //	@Router	/groups/{id} [delete]
 func (a *App) DeleteGroupHandler(c echo.Context) error {
 	groupID := c.Param("id")
+	ctx := c.Request().Context()
+
+	// A group that is already gone short-circuits before the level check.
+	// Deleting one removes its permissions resource too, so the grant a repeated
+	// delete would be checked against no longer exists and the check would
+	// answer 403 rather than repeating the successful outcome.
+	if _, err := a.store.GetGroup(ctx, groupID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return c.NoContent(http.StatusOK)
+		}
+		return storeError(err)
+	}
+
 	if err := a.requireLevel(c, groupID, permissions.LevelAdmin); err != nil {
 		return err
 	}
 
-	ctx := c.Request().Context()
 	err := a.store.WithTx(ctx, func(tx store.Tx) error {
 		return tx.DeleteGroup(ctx, groupID)
 	})

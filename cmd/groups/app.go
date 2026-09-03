@@ -51,19 +51,13 @@ func NewApp(ctx context.Context, config *koanf.Koanf) (*App, error) {
 		return nil, err
 	}
 
-	events, err := eventingFromConfig(config)
-	if err != nil {
-		closeStore(groupStore)
-		return nil, err
-	}
-
 	app := &App{
 		config:      config,
 		router:      echo.New(),
 		store:       groupStore,
 		userinfo:    users,
 		permissions: permissions.NewClient(permissionsBaseURL(config)),
-		events:      events,
+		events:      eventingFromConfig(config),
 		adminUsers:  adminUsersFromConfig(config),
 	}
 
@@ -106,27 +100,92 @@ func storeFromConfig(ctx context.Context, config *koanf.Koanf) (store.Store, err
 	if uri == "" {
 		return nil, fmt.Errorf("db.uri must be set in the configuration")
 	}
-	return pgstore.Open(ctx, pgstore.Config{
-		URI:        uri,
-		Schema:     config.String("db.schema"),
-		UserSuffix: config.String("users.suffix"),
-	})
+
+	cfg, err := poolFromConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	cfg.URI = uri
+	cfg.Schema = config.String("db.schema")
+	cfg.UserSuffix = config.String("users.suffix")
+
+	return pgstore.Open(ctx, cfg)
+}
+
+// poolFromConfig reads the optional connection-pool settings, leaving each one
+// zero when it is absent so the store applies its own default. A setting that is
+// present has to be usable: silently falling back to the default would run the
+// pool at a size nobody asked for.
+func poolFromConfig(config *koanf.Koanf) (pgstore.Config, error) {
+	var cfg pgstore.Config
+	var err error
+
+	if cfg.MaxOpenConns, err = positiveInt(config, "db.max-open-conns"); err != nil {
+		return cfg, err
+	}
+	if cfg.MaxIdleConns, err = positiveInt(config, "db.max-idle-conns"); err != nil {
+		return cfg, err
+	}
+
+	if config.Exists("db.conn-max-lifetime") {
+		lifetime := config.Duration("db.conn-max-lifetime")
+		if lifetime <= 0 {
+			return cfg, fmt.Errorf("db.conn-max-lifetime must be a positive duration, such as 5m")
+		}
+		cfg.ConnMaxLifetime = lifetime
+	}
+
+	maxOpen := cfg.MaxOpenConns
+	if maxOpen == 0 {
+		maxOpen = pgstore.DefaultMaxOpenConns
+	}
+	if cfg.MaxIdleConns > maxOpen {
+		return cfg, fmt.Errorf("db.max-idle-conns (%d) cannot exceed db.max-open-conns (%d)",
+			cfg.MaxIdleConns, maxOpen)
+	}
+	return cfg, nil
+}
+
+// positiveInt reads an integer setting, returning 0 when it is absent and an
+// error when it is present but unusable.
+func positiveInt(config *koanf.Koanf, key string) (int, error) {
+	if !config.Exists(key) {
+		return 0, nil
+	}
+	v := config.Int(key)
+	if v < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return v, nil
 }
 
 // eventingFromConfig builds the change-event publisher. When amqp.uri is not
 // configured, eventing is disabled and a no-op publisher is returned.
-func eventingFromConfig(config *koanf.Koanf) (eventing.Publisher, error) {
+//
+// A broker that cannot be reached is not fatal, matching how a failed publish is
+// treated: events are a reindex hint, and refusing to start would take group
+// management down with the broker.
+func eventingFromConfig(config *koanf.Koanf) eventing.Publisher {
 	uri := config.String("amqp.uri")
 	if uri == "" {
 		log.WithField("context", "startup").Info("AMQP eventing disabled: amqp.uri is not configured")
-		return eventing.NoopPublisher{}, nil
+		return eventing.NoopPublisher{}
 	}
 
 	exchange := config.String("amqp.exchange")
 	if exchange == "" {
 		exchange = "de"
 	}
-	return eventing.NewAMQPPublisher(uri, exchange)
+
+	publisher, err := eventing.NewAMQPPublisher(uri, exchange)
+	if err != nil {
+		log.WithField("context", "startup").
+			Errorf("could not connect to the AMQP broker, so change events will not be published "+
+				"until the service is restarted; downstream search indexes will go stale "+
+				"(check amqp.uri and that the broker is reachable): %s", err)
+		return eventing.NoopPublisher{}
+	}
+	return publisher
 }
 
 // publishGroupChanged publishes a change event for a group. Failures are logged
@@ -177,6 +236,7 @@ func (a *App) registerRoutes() {
 	a.router.HTTPErrorHandler = a.errorHandler
 
 	a.router.GET("/", a.StatusHandler).Name = "status"
+	a.router.GET("/healthz", a.HealthHandler).Name = "health"
 	a.router.GET("/docs/*", echoSwagger.WrapHandler)
 
 	groups := a.router.Group("/groups")

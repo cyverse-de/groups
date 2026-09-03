@@ -272,18 +272,87 @@ func TestUpdateGroup(t *testing.T) {
 }
 
 func TestDeleteGroup(t *testing.T) {
-	called := false
-	app := newTestApp(&mockStore{
-		deleteGroupFn: func(_ context.Context, id string) error {
-			called = true
-			assert.Equal(t, "abc", id)
-			return nil
-		},
+	t.Run("deletes the group", func(t *testing.T) {
+		called := false
+		app := newTestApp(&mockStore{
+			deleteGroupFn: func(_ context.Context, id string) error {
+				called = true
+				assert.Equal(t, "abc", id)
+				return nil
+			},
+		})
+
+		rec := doRequest(app, http.MethodDelete, "/groups/abc", "")
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.True(t, called)
 	})
 
-	rec := doRequest(app, http.MethodDelete, "/groups/abc", "")
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.True(t, called)
+	// Deleting a group removes its permissions resource, so a repeated delete
+	// finds no grant to check against. It must still report the outcome the
+	// caller asked for rather than a denial.
+	t.Run("succeeds when the group is already gone", func(t *testing.T) {
+		s := &mockStore{
+			getGroupFn: func(context.Context, string) (*model.Group, error) {
+				return nil, store.ErrNotFound
+			},
+			deleteGroupFn: func(context.Context, string) error {
+				t.Error("a group that is already gone must not be deleted again")
+				return nil
+			},
+		}
+		app := newTestAppWith(s, denyAllPermissions())
+
+		rec := doRequestAs(app, http.MethodDelete, "/groups/gone", "", "alice")
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("still refuses a caller without admin on an existing group", func(t *testing.T) {
+		s := &mockStore{
+			deleteGroupFn: func(context.Context, string) error {
+				t.Error("the delete must not reach the store without authorization")
+				return nil
+			},
+		}
+		app := newTestAppWith(s, denyAllPermissions())
+
+		rec := doRequestAs(app, http.MethodDelete, "/groups/abc", "", "stranger")
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+// System groups (de-users, workshop-users) are deployment-wide and have no
+// owning namespace to confine who may create them. Communities have no owner
+// either, but are deliberately open to any authenticated user.
+func TestAddGroupOwnerlessTypes(t *testing.T) {
+	tests := []struct {
+		name      string
+		groupType string
+		user      string
+		wantCode  int
+	}{
+		{name: "a user may create a community", groupType: model.GroupTypeCommunity, user: "alice", wantCode: http.StatusOK},
+		{name: "a user may not create a system group", groupType: model.GroupTypeSystem, user: "alice", wantCode: http.StatusForbidden},
+		{name: "a service account may create a system group", groupType: model.GroupTypeSystem, user: "de_grouper", wantCode: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newTestApp(&mockStore{
+				createGroupFn: func(_ context.Context, spec model.GroupSpec) (*model.Group, error) {
+					if tt.wantCode != http.StatusOK {
+						t.Error("an unauthorized creation must not reach the store")
+					}
+					assert.Empty(t, spec.Owner, "an ownerless type must not inherit the creator")
+					return &model.Group{ID: "new-id", GroupType: spec.GroupType, Name: spec.Name}, nil
+				},
+			})
+			app.adminUsers = map[string]struct{}{"de_grouper": {}}
+
+			rec := doRequestAs(app, http.MethodPost, "/groups",
+				`{"group_type":"`+tt.groupType+`","name":"Ecology"}`, tt.user)
+			assert.Equal(t, tt.wantCode, rec.Code)
+		})
+	}
 }
 
 // The listing is access-filtered by the acting user, except for the

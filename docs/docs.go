@@ -711,6 +711,17 @@ const docTemplate = `{
                 }
             }
         },
+        "/healthz": {
+            "get": {
+                "description": "Returns 200 whenever the process is serving requests. Backend connectivity is reported by GET / instead.",
+                "summary": "Liveness check",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
         "/subjects": {
             "get": {
                 "produces": [
@@ -774,6 +785,15 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/main.subjectsResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Too many subject IDs in one request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }

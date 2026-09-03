@@ -25,7 +25,8 @@ replacement for `iplant-groups` (which is backed by Grouper).
 - Authorization (which users may manage which groups) is delegated to the
   `permissions` service, where each group is a resource of type `group`. Any
   authenticated user may create a group in their own namespace and becomes its
-  owner.
+  owner; `system` groups are restricted to trusted service accounts. See
+  [Authorization](#authorization).
 - Group create/update/delete events are published over AMQP for downstream
   re-indexing, matching the messages emitted by `iplant-groups`.
 
@@ -138,7 +139,10 @@ Dockerfile, and CI all use the same version.
 
 ## Endpoints
 
-- `GET /` — service information and backend connectivity (liveness/readiness probe).
+- `GET /` — service information and backend connectivity (readiness probe). It
+  answers 503 while the database is unreachable.
+- `GET /healthz` — liveness probe. It touches no backend, so a database outage
+  does not restart every replica.
 - `GET /docs/` — Swagger UI for the API.
 
 Groups:
@@ -147,13 +151,18 @@ Groups:
   `member` matches groups the user reaches through any depth of nesting.
 - `GET /groups/lookup?group_type=&owner=&name=` — resolve a structured identity
   to a group.
-- `POST /groups` — create a group (`{group_type, owner, name, display_name, description}`).
+- `POST /groups` — create a group
+  (`{group_type, owner, name, display_name, description, members_public, joinable}`).
   `owner` defaults to the acting user, and only a trusted service account may set
-  it to someone else.
+  it to someone else. `members_public` makes a public group's member list public
+  too, and `joinable` lets a user add themselves without approval; both mean
+  nothing unless the group also carries a read grant to the public subject.
 - `GET /groups/:id` — get a group by ID.
-- `PUT /groups/:id` — update `{name, display_name, description}`. Type and owner
+- `PUT /groups/:id` — update
+  `{name, display_name, description, members_public, joinable}`. Type and owner
   are immutable: they form the group's identity.
-- `DELETE /groups/:id` — delete a group.
+- `DELETE /groups/:id` — delete a group. Deleting one that is already gone
+  succeeds.
 
 Membership. A member is a username, or another group's ID to nest it; nested
 members are reported with the `g:gsa` source ID, as Grouper did.
@@ -198,6 +207,8 @@ Subjects:
 
 - `GET /subjects?search=` — search subjects.
 - `POST /subjects/lookup` — look up multiple subjects by ID (`{subject_ids: [...]}`).
+  Keycloak has no bulk lookup by username, so each ID costs a round trip to it
+  and the list is capped like a bulk membership request.
 - `GET /subjects/:subject-id` — get a subject.
 - `GET /subjects/:subject-id/groups?group_type=` — list the groups a subject
   belongs to, including those reached through nesting.
@@ -208,7 +219,10 @@ When a group is created, updated, deleted, or has its membership changed, the
 service publishes a message to the configured AMQP topic exchange with a routing
 key of `index.group.<id>` and a JSON body of `{"message":"","timestamp_ms":<ms>}`,
 matching iplant-groups so existing reindexing consumers keep working. Eventing is
-disabled when `amqp.uri` is not configured.
+disabled when `amqp.uri` is not configured, and a broker that cannot be reached
+at startup is logged and treated the same way — events are a reindex hint, so a
+broker outage must not take group management down with it. Publishing resumes
+only after a restart.
 
 ## Authorization
 
@@ -222,13 +236,27 @@ Group-management rights are stored in the permissions service as grants on the
 
 | Operation | Required |
 | --- | --- |
-| create a group | any authenticated user (the creator is granted `own`) |
+| create a `collaborator_list`, `team`, or `community` | any authenticated user (the creator is granted `own`) |
+| create a `system` group | a trusted service account (`admin.users`) |
 | get a group / list members | `read` or membership in the group |
-| update a group / manage members | `write` |
-| delete a group | `own` |
+| update a group / manage members / manage group permissions | `admin` |
+| delete a group | `admin` |
+
+Mutating operations ask for `admin` rather than `write` or `own`. The DE's level
+precedence is `own` = 0, `write` = 1, `admin` = 2, `read` = 3, so `admin` sits
+*below* `write`: requiring `write` would lock out every co-admin — exactly the
+subjects Grouper's `admins` privilege produced and the ones terrain lists as a
+team's admins. `own` is stronger and still passes.
+
+A `system` group (`de-users`, `workshop-users`) is deployment-wide and has no
+owning namespace to confine who may create it, so only a trusted service account
+may. A `community` has no owner either, but creating one is open to any
+authenticated user by design.
 
 The creator of a group is granted `own` automatically; if that grant fails the
-group is rolled back. Deleting a group also removes its permissions resource.
+group is rolled back. Deleting a group also removes its permissions resource,
+which is why a repeated `DELETE` short-circuits to success before the permission
+check: the grant it would be checked against went with the group.
 
 Trusted service accounts may be configured to bypass these per-group checks:
 

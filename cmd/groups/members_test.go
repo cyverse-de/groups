@@ -106,6 +106,42 @@ func TestGetMembers(t *testing.T) {
 		rec := doRequest(app, http.MethodGet, "/groups/missing/members", "")
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+
+	// A directory outage degrades display data rather than authorization:
+	// membership lives in our database, so the list is still served.
+	t.Run("survives a directory outage", func(t *testing.T) {
+		app := newTestApp(&mockStore{
+			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+				return []model.MemberRef{
+					{ID: "alice", Type: model.MemberTypeUser},
+					{ID: "team-1", Type: model.MemberTypeGroup},
+				}, nil
+			},
+			getGroupFn: func(_ context.Context, id string) (*model.Group, error) {
+				return &model.Group{ID: id, Name: "Ecology"}, nil
+			},
+		})
+		app.userinfo = &mockUserInfo{
+			getManyFn: func(context.Context, []string) ([]model.Subject, error) {
+				return nil, assert.AnError
+			},
+		}
+
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp membersResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Members, 2)
+
+		byID := map[string]model.Subject{}
+		for _, m := range resp.Members {
+			byID[m.ID] = m
+		}
+		assert.Equal(t, "alice", byID["alice"].Name, "falls back to the bare identifier")
+		assert.Equal(t, model.SourceUser, byID["alice"].SourceID)
+		assert.Equal(t, "Ecology", byID["team-1"].Name, "a nested group is described from the store")
+	})
 }
 
 func TestAddMembersBulkCollectsResults(t *testing.T) {
@@ -256,6 +292,40 @@ func TestSingleMemberOperations(t *testing.T) {
 		rec := doRequest(app, http.MethodPut, "/groups/g1/members/team-1", "")
 		assert.Equal(t, http.StatusConflict, rec.Code)
 	})
+}
+
+// Consumers tell a user from a nested group by source_id, so a change whose kind
+// the store could not report -- removing a subject that was not a member -- must
+// carry none rather than be labelled a user.
+func TestRemoveMembersReportsTheSubjectKind(t *testing.T) {
+	tests := []struct {
+		name         string
+		changeType   string
+		wantSourceID string
+	}{
+		{name: "a removed user", changeType: model.MemberTypeUser, wantSourceID: model.SourceUser},
+		{name: "a removed nested group", changeType: model.MemberTypeGroup, wantSourceID: model.SourceGroup},
+		{name: "a subject that was not a member", changeType: "", wantSourceID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newTestApp(&mockStore{
+				removeMembersFn: func(_ context.Context, _ string, ids []string) ([]model.MemberChange, error) {
+					return []model.MemberChange{{SubjectID: ids[0], Type: tt.changeType}}, nil
+				},
+			})
+
+			rec := doRequest(app, http.MethodPost, "/groups/g1/members/deleter", `{"members":["team-1"]}`)
+			require.Equal(t, http.StatusOK, rec.Code)
+
+			var resp membersResults
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Len(t, resp.Results, 1)
+			assert.True(t, resp.Results[0].Success)
+			assert.Equal(t, tt.wantSourceID, resp.Results[0].SourceID)
+		})
+	}
 }
 
 func TestBulkMembershipSizeLimit(t *testing.T) {

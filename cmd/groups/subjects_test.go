@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/cyverse-de/groups/model"
@@ -61,6 +62,27 @@ func TestLookupSubjectsSkipsMissing(t *testing.T) {
 	require.Len(t, resp.Subjects, 2)
 	assert.Equal(t, "alice", resp.Subjects[0].ID)
 	assert.Equal(t, "bob", resp.Subjects[1].ID)
+}
+
+// Each subject ID costs a round trip to the directory, so an unbounded list is
+// an unbounded fan-out of calls to it.
+func TestLookupSubjectsSizeLimit(t *testing.T) {
+	app := newTestApp(&mockStore{})
+	app.userinfo = &mockUserInfo{
+		getManyFn: func(context.Context, []string) ([]model.Subject, error) {
+			t.Error("an oversized lookup must be rejected before reaching the directory")
+			return nil, nil
+		},
+	}
+
+	ids := make([]string, maxBulkMembers+1)
+	for i := range ids {
+		ids[i] = "user"
+	}
+	body := `{"subject_ids":["` + strings.Join(ids, `","`) + `"]}`
+
+	rec := doRequest(app, http.MethodPost, "/subjects/lookup", body)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 }
 
 func TestSubjectGroups(t *testing.T) {

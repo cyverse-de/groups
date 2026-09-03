@@ -46,3 +46,18 @@ func TestStatusHandler(t *testing.T) {
 		})
 	}
 }
+
+// Liveness must not depend on the database: failing it during an outage restarts
+// every replica instead of leaving them to serve again once the database
+// returns.
+func TestHealthHandlerIgnoresBackends(t *testing.T) {
+	app := newTestApp(&mockStore{
+		pingFn: func(context.Context) error {
+			t.Error("the liveness probe must not touch the database")
+			return nil
+		},
+	})
+
+	rec := doRequestAs(app, http.MethodGet, "/healthz", "", "")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}

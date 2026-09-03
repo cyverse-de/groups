@@ -78,16 +78,12 @@ func (a *App) GetMembersHandler(c echo.Context) error {
 		return storeError(err)
 	}
 
-	members, err := a.hydrateMembers(ctx, refs)
-	if err != nil {
-		return storeError(err)
-	}
-	return c.JSON(http.StatusOK, &membersResponse{Members: members})
+	return c.JSON(http.StatusOK, &membersResponse{Members: a.hydrateMembers(ctx, refs)})
 }
 
 // hydrateMembers turns member references into subjects: users are looked up in
 // the identity provider in one batch, and groups are described from the store.
-func (a *App) hydrateMembers(ctx context.Context, refs []model.MemberRef) ([]model.Subject, error) {
+func (a *App) hydrateMembers(ctx context.Context, refs []model.MemberRef) []model.Subject {
 	usernames := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		if ref.Type == model.MemberTypeUser {
@@ -97,9 +93,13 @@ func (a *App) hydrateMembers(ctx context.Context, refs []model.MemberRef) ([]mod
 
 	byUsername := make(map[string]model.Subject, len(usernames))
 	if len(usernames) > 0 {
+		// A directory failure must not fail the listing: membership lives in our
+		// database, and the names are display data laid over it.
 		subjects, err := a.userinfo.GetMany(ctx, usernames)
 		if err != nil {
-			return nil, err
+			log.WithField("context", "membership").
+				Warnf("could not resolve member names; the membership is listed without them "+
+					"(check keycloak.* settings and connectivity): %s", err)
 		}
 		for _, s := range subjects {
 			byUsername[s.ID] = s
@@ -121,7 +121,7 @@ func (a *App) hydrateMembers(ctx context.Context, refs []model.MemberRef) ([]mod
 		// dropping them.
 		members = append(members, model.Subject{ID: ref.ID, Name: ref.ID, SourceID: model.SourceUser})
 	}
-	return members, nil
+	return members
 }
 
 // groupSubject describes a nested group as a subject, falling back to the bare
@@ -433,12 +433,17 @@ func (a *App) renderResults(ctx context.Context, changes []model.MemberChange) [
 		case change.Type == model.MemberTypeGroup:
 			result.SourceID = model.SourceGroup
 			result.SubjectName = a.groupSubject(ctx, change.SubjectID).Name
-		default:
+		case change.Type == model.MemberTypeUser:
 			result.SourceID = model.SourceUser
 			result.SubjectName = change.SubjectID
 			if s, ok := byUsername[change.SubjectID]; ok && s.Name != "" {
 				result.SubjectName = s.Name
 			}
+		default:
+			// Removing a subject that was not a member reports no type, so its
+			// kind is unknown. Tagging it anyway would report an absent nested
+			// group as a user, which is how consumers tell the two apart.
+			result.SubjectName = change.SubjectID
 		}
 		results = append(results, result)
 	}

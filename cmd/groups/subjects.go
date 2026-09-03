@@ -90,11 +90,17 @@ func (a *App) searchGroupSubjects(ctx context.Context, c echo.Context, search st
 //	@Param	user	query	string	true	"The acting user"
 //	@Param	body	body	lookupRequest	true	"The subject IDs to look up"
 //	@Success	200	{object}	subjectsResponse
+//	@Failure	413	{object}	map[string]string	"Too many subject IDs in one request"
 //	@Router	/subjects/lookup [post]
 func (a *App) LookupSubjectsHandler(c echo.Context) error {
 	var req lookupRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	// The directory has no bulk lookup, so each ID costs a round trip to it.
+	if len(req.SubjectIDs) > maxBulkMembers {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge,
+			"too many subject IDs in one request")
 	}
 
 	subjects, err := a.userinfo.GetMany(c.Request().Context(), req.SubjectIDs)

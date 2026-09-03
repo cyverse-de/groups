@@ -10,9 +10,10 @@ RUN go mod download
 # Copy source code.
 COPY . .
 
+# The target platform is left to the builder, so the same Dockerfile produces an
+# arm64 image under `--platform`. Only cgo is pinned, for the distroless static
+# runtime stage.
 ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
 
 # Regenerate the Swagger docs so the image is never built from stale docs. The
 # swag version is pinned by the tool directive in go.mod.

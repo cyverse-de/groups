@@ -19,9 +19,9 @@ type StatusResponse struct {
 }
 
 // StatusHandler reports basic service information and backend connectivity, and
-// serves as the liveness/readiness probe target: a failed database ping answers
-// 503 so the pod leaves rotation. A failed Keycloak ping stays 200, because the
-// service can serve most reads without it -- only names and emails degrade.
+// serves as the readiness probe target: a failed database ping answers 503 so
+// the pod leaves rotation. A failed Keycloak ping stays 200, because the service
+// can serve most reads without it -- only names and emails degrade.
 //
 //	@Summary	Service information
 //	@Description	Returns the service name, version, and backend connectivity. Responds 503 when the database is unreachable.
@@ -53,4 +53,17 @@ func (a *App) StatusHandler(c echo.Context) error {
 		Database: dbErr == nil,
 		Keycloak: kcErr == nil,
 	})
+}
+
+// HealthHandler handles GET /healthz, the liveness probe target. It answers from
+// the process alone, deliberately touching no backend: a liveness probe that
+// fails on a database outage restarts every replica while the database is down,
+// which cannot fix anything and loses the pods that would have recovered.
+//
+//	@Summary	Liveness check
+//	@Description	Returns 200 whenever the process is serving requests. Backend connectivity is reported by GET / instead.
+//	@Success	200
+//	@Router	/healthz [get]
+func (a *App) HealthHandler(c echo.Context) error {
+	return c.NoContent(http.StatusOK)
 }
