@@ -58,7 +58,7 @@ func (t *target) RequireGrouperAuthoritative(ctx context.Context) error {
 		`SELECT source, changed_by FROM group_data_source`).Scan(&source, &changedBy)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("%w: group_data_source has no row; migration 000054 seeds one", errNotAuthoritative)
+		return fmt.Errorf("%w: group_data_source has no row; migration 000057 seeds one", errNotAuthoritative)
 	case err != nil:
 		return fmt.Errorf("could not read group_data_source: %w", err)
 	case source != "grouper":
