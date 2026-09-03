@@ -19,18 +19,32 @@ const maxSubjectIDLength = 512
 
 // ListMembers returns a group's direct members. A member may be another group:
 // nesting is supported, and callers distinguish the two by Type.
-func (r *reader) ListMembers(ctx context.Context, groupID string) ([]model.MemberRef, error) {
+//
+// The ordering is stable so that paging cannot repeat or skip a member between
+// requests.
+func (r *reader) ListMembers(ctx context.Context, groupID string, filter store.MemberFilter) ([]model.MemberRef, error) {
 	if _, err := r.internalGroupID(ctx, groupID); err != nil {
 		return nil, err
 	}
 
-	rows, err := r.q.QueryContext(ctx, `
+	query := `
 		SELECT ms.subject_id, gm.member_type
 		FROM group_memberships gm
 		JOIN subjects gs ON gs.id = gm.group_id
 		JOIN subjects ms ON ms.id = gm.member_id
 		WHERE gs.subject_id = $1
-		ORDER BY ms.subject_id`, groupID)
+		ORDER BY ms.subject_id`
+	args := []any{groupID}
+	if filter.Limit > 0 {
+		args = append(args, filter.Limit)
+		query += fmt.Sprintf("\n\t\tLIMIT $%d", len(args))
+	}
+	if filter.Offset > 0 {
+		args = append(args, filter.Offset)
+		query += fmt.Sprintf("\n\t\tOFFSET $%d", len(args))
+	}
+
+	rows, err := r.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, translateErr(err)
 	}
@@ -46,6 +60,24 @@ func (r *reader) ListMembers(ctx context.Context, groupID string) ([]model.Membe
 		members = append(members, m)
 	}
 	return members, translateErr(rows.Err())
+}
+
+// CountMembers returns how many direct members a group has.
+func (r *reader) CountMembers(ctx context.Context, groupID string) (int, error) {
+	if _, err := r.internalGroupID(ctx, groupID); err != nil {
+		return 0, err
+	}
+
+	var total int
+	err := r.q.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM group_memberships gm
+		JOIN subjects gs ON gs.id = gm.group_id
+		WHERE gs.subject_id = $1`, groupID).Scan(&total)
+	if err != nil {
+		return 0, translateErr(err)
+	}
+	return total, nil
 }
 
 // IsEffectiveMember reports whether the user belongs to the group through any
@@ -209,7 +241,7 @@ func (t *tx) RemoveMembers(ctx context.Context, groupID string, subjectIDs []str
 // ReplaceMembers makes the group's membership exactly the given set, reporting
 // only the additions and removals it performed.
 func (t *tx) ReplaceMembers(ctx context.Context, groupID string, subjectIDs []string, addedBy string) ([]model.MemberChange, error) {
-	current, err := t.ListMembers(ctx, groupID)
+	current, err := t.ListMembers(ctx, groupID, store.MemberFilter{})
 	if err != nil {
 		return nil, err
 	}

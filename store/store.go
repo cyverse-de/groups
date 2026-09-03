@@ -32,6 +32,12 @@ var (
 	ErrInvalid = errors.New("store: invalid value")
 )
 
+// MemberFilter pages a member listing. A zero Limit returns every member.
+type MemberFilter struct {
+	Limit  int
+	Offset int
+}
+
 // ListFilter narrows a group listing. Empty fields are not applied. Member is a
 // username, and matches groups the user belongs to through any depth of nesting.
 type ListFilter struct {
@@ -66,7 +72,13 @@ type Reader interface {
 	ListGroups(ctx context.Context, filter ListFilter) ([]model.Group, error)
 
 	// ListMembers returns a group's direct members, which may include groups.
-	ListMembers(ctx context.Context, groupID string) ([]model.MemberRef, error)
+	// A zero Limit returns every member: callers that reconcile state from the
+	// result need all of it, and a short list they mistake for the whole one
+	// deletes members downstream.
+	ListMembers(ctx context.Context, groupID string, filter MemberFilter) ([]model.MemberRef, error)
+
+	// CountMembers returns how many direct members a group has.
+	CountMembers(ctx context.Context, groupID string) (int, error)
 
 	// IsEffectiveMember reports whether the user belongs to the group through any
 	// depth of nesting.

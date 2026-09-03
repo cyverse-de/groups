@@ -152,7 +152,7 @@ func TestListMembersPublicGroup(t *testing.T) {
 				getGroupFn: func(context.Context, string) (*model.Group, error) {
 					return &model.Group{ID: "g1", MembersPublic: tt.membersPublic}, nil
 				},
-				listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+				listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
 					return []model.MemberRef{{ID: "bob", Type: model.MemberTypeUser}}, nil
 				},
 			}
@@ -190,7 +190,7 @@ func TestListMembersVisibleToMember(t *testing.T) {
 		getGroupFn: func(context.Context, string) (*model.Group, error) {
 			return &model.Group{ID: "g1", MembersPublic: false}, nil
 		},
-		listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+		listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
 			return []model.MemberRef{
 				{ID: "bob", Type: model.MemberTypeUser},
 				{ID: "carol", Type: model.MemberTypeUser},
@@ -264,7 +264,7 @@ func TestGetGroupAllowedByNestedMembership(t *testing.T) {
 		isEffectiveMemberFn: func(context.Context, string, string) (bool, error) {
 			return true, nil
 		},
-		listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+		listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
 			// The user is not a direct member: they are in a nested group.
 			return []model.MemberRef{{ID: "team-1", Type: model.MemberTypeGroup}}, nil
 		},

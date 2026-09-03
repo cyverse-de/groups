@@ -20,7 +20,8 @@ type mockStore struct {
 	getGroupFn          func(ctx context.Context, id string) (*model.Group, error)
 	lookupGroupFn       func(ctx context.Context, ref model.Ref) (*model.Group, error)
 	listGroupsFn        func(ctx context.Context, f store.ListFilter) ([]model.Group, error)
-	listMembersFn       func(ctx context.Context, groupID string) ([]model.MemberRef, error)
+	listMembersFn       func(ctx context.Context, groupID string, filter store.MemberFilter) ([]model.MemberRef, error)
+	countMembersFn      func(ctx context.Context, groupID string) (int, error)
 	isEffectiveMemberFn func(ctx context.Context, groupID, username string) (bool, error)
 	groupsForSubjectFn  func(ctx context.Context, username, groupType, visibleTo string) ([]model.Group, error)
 	existingSubjectsFn  func(ctx context.Context, ids []string) ([]string, error)
@@ -83,11 +84,22 @@ func (m *mockStore) ListGroups(ctx context.Context, f store.ListFilter) ([]model
 	return []model.Group{}, nil
 }
 
-func (m *mockStore) ListMembers(ctx context.Context, groupID string) ([]model.MemberRef, error) {
+func (m *mockStore) ListMembers(ctx context.Context, groupID string, filter store.MemberFilter) ([]model.MemberRef, error) {
 	if m.listMembersFn != nil {
-		return m.listMembersFn(ctx, groupID)
+		return m.listMembersFn(ctx, groupID, filter)
 	}
 	return []model.MemberRef{}, nil
+}
+
+func (m *mockStore) CountMembers(ctx context.Context, groupID string) (int, error) {
+	if m.countMembersFn != nil {
+		return m.countMembersFn(ctx, groupID)
+	}
+	if m.listMembersFn != nil {
+		members, err := m.listMembersFn(ctx, groupID, store.MemberFilter{})
+		return len(members), err
+	}
+	return 0, nil
 }
 
 func (m *mockStore) IsEffectiveMember(ctx context.Context, groupID, username string) (bool, error) {
@@ -332,6 +344,9 @@ func newTestAppWith(s store.Store, perms permissions.Client) *App {
 		userinfo:    &mockUserInfo{},
 		permissions: perms,
 		events:      eventing.NoopPublisher{},
+		// Matches what maxMemberListingFromConfig gives a real App; left zero,
+		// every listing would refuse as over-cap.
+		maxMemberListing: DefaultMaxMemberListing,
 	}
 	app.registerRoutes()
 	return app

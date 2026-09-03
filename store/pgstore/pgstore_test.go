@@ -258,14 +258,14 @@ func TestMembership(t *testing.T) {
 			assert.Equal(t, model.MemberTypeUser, c.Type)
 		}
 
-		members, err := s.ListMembers(t.Context(), list.ID)
+		members, err := s.ListMembers(t.Context(), list.ID, store.MemberFilter{})
 		require.NoError(t, err)
 		assert.Len(t, members, 2)
 	})
 
 	t.Run("adding an existing member is idempotent", func(t *testing.T) {
 		mustAddMembers(t, s, list.ID, "test-bob")
-		members, err := s.ListMembers(t.Context(), list.ID)
+		members, err := s.ListMembers(t.Context(), list.ID, store.MemberFilter{})
 		require.NoError(t, err)
 		assert.Len(t, members, 2, "re-adding a member must not duplicate it")
 	})
@@ -322,7 +322,7 @@ func TestMembership(t *testing.T) {
 		}))
 		assert.Len(t, changes, 1, "a repeated subject must yield one add and one change")
 
-		members, err := s.ListMembers(t.Context(), group.ID)
+		members, err := s.ListMembers(t.Context(), group.ID, store.MemberFilter{})
 		require.NoError(t, err)
 		assert.Len(t, members, 1)
 	})
@@ -349,7 +349,7 @@ func TestNesting(t *testing.T) {
 	})
 
 	t.Run("direct membership still reports the group, not its users", func(t *testing.T) {
-		members, err := s.ListMembers(t.Context(), list.ID)
+		members, err := s.ListMembers(t.Context(), list.ID, store.MemberFilter{})
 		require.NoError(t, err)
 		require.Len(t, members, 1)
 		assert.Equal(t, team.ID, members[0].ID)
@@ -593,7 +593,7 @@ func TestAddMemberRejectsWhitespaceIdentifier(t *testing.T) {
 	require.Error(t, byID["test-cencas "].Err, "a trailing space must be rejected")
 	assert.NoError(t, byID["test-clean"].Err, "the rest of the batch must still apply")
 
-	members, err := s.ListMembers(t.Context(), g.ID)
+	members, err := s.ListMembers(t.Context(), g.ID, store.MemberFilter{})
 	require.NoError(t, err)
 	ids := make([]string, 0, len(members))
 	for _, m := range members {
@@ -734,4 +734,61 @@ func grantOnGroup(t *testing.T, s *Store, groupID, subjectID, subjectType, level
 		SELECT $1, $2, pl.id FROM permission_levels pl WHERE pl.name = $3
 		ON CONFLICT (subject_id, resource_id) DO NOTHING`, subjID, resID, level)
 	require.NoError(t, err)
+}
+
+func TestListMembersPaging(t *testing.T) {
+	s := testStore(t)
+	list := mustCreate(t, s, collabList("test-alice", "paging"))
+
+	ids := []string{"test-p1", "test-p2", "test-p3", "test-p4", "test-p5"}
+	mustAddMembers(t, s, list.ID, ids...)
+
+	names := func(members []model.MemberRef) []string {
+		out := make([]string, 0, len(members))
+		for _, m := range members {
+			out = append(out, m.ID)
+		}
+		return out
+	}
+
+	t.Run("counts every member", func(t *testing.T) {
+		total, err := s.CountMembers(t.Context(), list.ID)
+		require.NoError(t, err)
+		assert.Equal(t, len(ids), total)
+	})
+
+	t.Run("an empty filter returns every member", func(t *testing.T) {
+		members, err := s.ListMembers(t.Context(), list.ID, store.MemberFilter{})
+		require.NoError(t, err)
+		assert.Equal(t, ids, names(members))
+	})
+
+	t.Run("pages cover the listing exactly once", func(t *testing.T) {
+		var seen []string
+		for offset := 0; offset < len(ids); offset += 2 {
+			members, err := s.ListMembers(t.Context(), list.ID,
+				store.MemberFilter{Limit: 2, Offset: offset})
+			require.NoError(t, err)
+			seen = append(seen, names(members)...)
+		}
+		assert.Equal(t, ids, seen, "paging must neither repeat nor skip a member")
+	})
+
+	t.Run("an offset past the end is empty, not an error", func(t *testing.T) {
+		members, err := s.ListMembers(t.Context(), list.ID,
+			store.MemberFilter{Limit: 2, Offset: len(ids) + 10})
+		require.NoError(t, err)
+		assert.Empty(t, members)
+	})
+
+	t.Run("an offset with no limit skips without truncating", func(t *testing.T) {
+		members, err := s.ListMembers(t.Context(), list.ID, store.MemberFilter{Offset: 3})
+		require.NoError(t, err)
+		assert.Equal(t, ids[3:], names(members))
+	})
+
+	t.Run("counting a group that does not exist reports not found", func(t *testing.T) {
+		_, err := s.CountMembers(t.Context(), "00000000000000000000000000000000")
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
 }

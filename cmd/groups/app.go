@@ -31,6 +31,8 @@ type App struct {
 	permissions permissions.Client
 	events      eventing.Publisher
 	adminUsers  map[string]struct{}
+	// maxMemberListing caps one member listing; see GetMembersHandler.
+	maxMemberListing int
 }
 
 //	@title			groups
@@ -52,13 +54,14 @@ func NewApp(ctx context.Context, config *koanf.Koanf) (*App, error) {
 	}
 
 	app := &App{
-		config:      config,
-		router:      echo.New(),
-		store:       groupStore,
-		userinfo:    users,
-		permissions: permissions.NewClient(permissionsBaseURL(config)),
-		events:      eventingFromConfig(config),
-		adminUsers:  adminUsersFromConfig(config),
+		config:           config,
+		router:           echo.New(),
+		store:            groupStore,
+		userinfo:         users,
+		permissions:      permissions.NewClient(permissionsBaseURL(config)),
+		events:           eventingFromConfig(config),
+		adminUsers:       adminUsersFromConfig(config),
+		maxMemberListing: maxMemberListingFromConfig(config),
 	}
 
 	app.ensureResourceType()
@@ -205,6 +208,20 @@ func permissionsBaseURL(config *koanf.Koanf) string {
 		return base
 	}
 	return "http://permissions"
+}
+
+// DefaultMaxMemberListing caps one member listing. Every user member costs a
+// directory lookup to resolve a display name, so this bounds how long one
+// request can take as much as how large its response can be.
+const DefaultMaxMemberListing = 1000
+
+// maxMemberListingFromConfig reads groups.max-member-listing, falling back to
+// the default when it is absent or not positive.
+func maxMemberListingFromConfig(config *koanf.Koanf) int {
+	if n := config.Int("groups.max-member-listing"); n > 0 {
+		return n
+	}
+	return DefaultMaxMemberListing
 }
 
 // adminUsersFromConfig builds the set of trusted service accounts (admin.users)

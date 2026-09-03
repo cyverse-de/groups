@@ -115,6 +115,11 @@ definitions:
           this endpoint -- group-propagator replaces iRODS ACLs from it -- treats
           the redaction as truth and deletes every member.
         type: boolean
+      total:
+        description: |-
+          Total is the group's full direct membership, which exceeds the members
+          returned when the caller asked for a page.
+        type: integer
     type: object
   main.membersResults:
     properties:
@@ -383,6 +388,14 @@ paths:
         name: id
         required: true
         type: string
+      - description: Maximum members to return
+        in: query
+        name: limit
+        type: integer
+      - description: Members to skip
+        in: query
+        name: offset
+        type: integer
       produces:
       - application/json
       responses:
@@ -392,6 +405,12 @@ paths:
             $ref: '#/definitions/main.membersResponse'
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: The group has more members than one response may carry
           schema:
             additionalProperties:
               type: string

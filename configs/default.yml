@@ -21,6 +21,14 @@ db:
   max-idle-conns: 5
   conn-max-lifetime: 5m
 
+# Caps one member listing. A listing without an explicit limit is refused rather
+# than truncated when the group is larger than this: group-propagator replaces an
+# iRODS group's membership from that response, so a page mistaken for the whole
+# list would delete everyone past it. Every user member also costs one directory
+# lookup, so this bounds request duration as well as response size.
+groups:
+  max-member-listing: 1000
+
 # Domain appended to a bare username to form the public.users.username of the
 # corresponding DE user, used to correlate a new subject with its DE user row.
 # Leave unset to use the default (@iplantcollaborative.org).

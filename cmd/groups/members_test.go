@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ import (
 func TestGetMembers(t *testing.T) {
 	t.Run("hydrates users from the directory", func(t *testing.T) {
 		app := newTestApp(&mockStore{
-			listMembersFn: func(_ context.Context, id string) ([]model.MemberRef, error) {
+			listMembersFn: func(_ context.Context, id string, _ store.MemberFilter) ([]model.MemberRef, error) {
 				assert.Equal(t, "g1", id)
 				return []model.MemberRef{
 					{ID: "alice", Type: model.MemberTypeUser},
@@ -48,7 +49,7 @@ func TestGetMembers(t *testing.T) {
 
 	t.Run("reports a nested group with the group source", func(t *testing.T) {
 		app := newTestApp(&mockStore{
-			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+			listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
 				return []model.MemberRef{
 					{ID: "team-1", Type: model.MemberTypeGroup},
 					{ID: "alice", Type: model.MemberTypeUser},
@@ -77,7 +78,7 @@ func TestGetMembers(t *testing.T) {
 
 	t.Run("keeps a member the directory does not know", func(t *testing.T) {
 		app := newTestApp(&mockStore{
-			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+			listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
 				return []model.MemberRef{{ID: "ghost", Type: model.MemberTypeUser}}, nil
 			},
 		})
@@ -99,7 +100,7 @@ func TestGetMembers(t *testing.T) {
 
 	t.Run("reports a missing group as 404", func(t *testing.T) {
 		app := newTestApp(&mockStore{
-			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+			listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
 				return nil, store.ErrNotFound
 			},
 		})
@@ -111,7 +112,7 @@ func TestGetMembers(t *testing.T) {
 	// membership lives in our database, so the list is still served.
 	t.Run("survives a directory outage", func(t *testing.T) {
 		app := newTestApp(&mockStore{
-			listMembersFn: func(context.Context, string) ([]model.MemberRef, error) {
+			listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
 				return []model.MemberRef{
 					{ID: "alice", Type: model.MemberTypeUser},
 					{ID: "team-1", Type: model.MemberTypeGroup},
@@ -339,4 +340,83 @@ func TestBulkMembershipSizeLimit(t *testing.T) {
 
 	rec := doRequest(app, http.MethodPost, "/groups/g1/members", body)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+}
+
+func TestGetMembersPaging(t *testing.T) {
+	// A group larger than the cap, so the guard and the paging both engage.
+	const total = DefaultMaxMemberListing + 5
+	refs := make([]model.MemberRef, 0, total)
+	for i := range total {
+		refs = append(refs, model.MemberRef{ID: fmt.Sprintf("u%04d", i), Type: model.MemberTypeUser})
+	}
+	page := func(_ context.Context, _ string, f store.MemberFilter) ([]model.MemberRef, error) {
+		out := refs[min(f.Offset, len(refs)):]
+		if f.Limit > 0 && f.Limit < len(out) {
+			out = out[:f.Limit]
+		}
+		return out, nil
+	}
+
+	t.Run("refuses an unpaged listing rather than truncating it", func(t *testing.T) {
+		app := newTestApp(&mockStore{listMembersFn: page})
+
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members", "")
+		require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+		assert.Contains(t, rec.Body.String(), "limit and offset",
+			"the refusal must say how to get the rest")
+	})
+
+	t.Run("serves an explicitly requested page and reports the total", func(t *testing.T) {
+		app := newTestApp(&mockStore{listMembersFn: page})
+
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members?limit=2&offset=1", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp membersResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Members, 2)
+		assert.Equal(t, "u0001", resp.Members[0].ID)
+		assert.Equal(t, "u0002", resp.Members[1].ID)
+		assert.Equal(t, total, resp.Total, "the total must describe the group, not the page")
+	})
+
+	t.Run("caps a page larger than the maximum", func(t *testing.T) {
+		var got store.MemberFilter
+		app := newTestApp(&mockStore{
+			listMembersFn: func(ctx context.Context, id string, f store.MemberFilter) ([]model.MemberRef, error) {
+				got = f
+				return page(ctx, id, f)
+			},
+		})
+
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members?limit=99999", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, DefaultMaxMemberListing, got.Limit)
+	})
+
+	t.Run("a group within the cap is unpaged as before", func(t *testing.T) {
+		small := []model.MemberRef{{ID: "alice", Type: model.MemberTypeUser}}
+		app := newTestApp(&mockStore{
+			listMembersFn: func(context.Context, string, store.MemberFilter) ([]model.MemberRef, error) {
+				return small, nil
+			},
+		})
+
+		rec := doRequest(app, http.MethodGet, "/groups/g1/members", "")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp membersResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Len(t, resp.Members, 1)
+		assert.Equal(t, 1, resp.Total)
+	})
+
+	t.Run("rejects a malformed page", func(t *testing.T) {
+		app := newTestApp(&mockStore{listMembersFn: page})
+
+		for _, target := range []string{"/groups/g1/members?limit=abc", "/groups/g1/members?offset=-1"} {
+			rec := doRequest(app, http.MethodGet, target, "")
+			assert.Equal(t, http.StatusBadRequest, rec.Code, target)
+		}
+	})
 }

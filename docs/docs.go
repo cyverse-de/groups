@@ -320,6 +320,18 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum members to return",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Members to skip",
+                        "name": "offset",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -331,6 +343,15 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "The group has more members than one response may carry",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1075,6 +1096,10 @@ const docTemplate = `{
                 "redacted": {
                     "description": "Redacted marks a member list withheld because the group is public but\nits membership is not. Without it an empty list is indistinguishable\nfrom a genuinely empty group, and a service that reconciles state from\nthis endpoint -- group-propagator replaces iRODS ACLs from it -- treats\nthe redaction as truth and deletes every member.",
                     "type": "boolean"
+                },
+                "total": {
+                    "description": "Total is the group's full direct membership, which exceeds the members\nreturned when the caller asked for a page.",
+                    "type": "integer"
                 }
             }
         },

@@ -355,7 +355,7 @@ func importMembership(ctx context.Context, cfg *config, source *grouperSource, t
 			// Read the current membership first so the report can distinguish
 			// additions from removals; ReplaceMembers reports the changes it
 			// made without saying which direction each went.
-			before, err := tx.ListMembers(ctx, groupID)
+			before, err := tx.ListMembers(ctx, groupID, store.MemberFilter{})
 			if err != nil {
 				return err
 			}

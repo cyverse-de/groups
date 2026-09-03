@@ -167,7 +167,12 @@ Groups:
 Membership. A member is a username, or another group's ID to nest it; nested
 members are reported with the `g:gsa` source ID, as Grouper did.
 
-- `GET /groups/:id/members` — list direct members.
+- `GET /groups/:id/members?limit=&offset=` — list direct members, with `total`
+  reporting the group's whole membership. A group larger than
+  `groups.max-member-listing` (1000 by default) is **refused** with a 413 unless
+  the caller asks for a page: this response is what group-propagator replaces an
+  iRODS group's membership from, so a page mistaken for the whole list would
+  delete everyone past it. Page through a large group with `limit` and `offset`.
 - `PUT /groups/:id/members` — replace the full membership (`{members: [...]}`).
 - `POST /groups/:id/members` — bulk-add members.
 - `POST /groups/:id/members/deleter` — bulk-remove members.

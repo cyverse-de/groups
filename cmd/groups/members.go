@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/cyverse-de/groups/model"
@@ -26,6 +27,10 @@ type membersResponse struct {
 	// this endpoint -- group-propagator replaces iRODS ACLs from it -- treats
 	// the redaction as truth and deletes every member.
 	Redacted bool `json:"redacted,omitempty"`
+
+	// Total is the group's full direct membership, which exceeds the members
+	// returned when the caller asked for a page.
+	Total int `json:"total"`
 }
 
 // membersRequest is the body for bulk membership operations.
@@ -54,8 +59,11 @@ type membersResults struct {
 //	@Summary	List group members
 //	@Produce	json
 //	@Param	id	path	string	true	"Group identifier"
+//	@Param	limit	query	int	false	"Maximum members to return"
+//	@Param	offset	query	int	false	"Members to skip"
 //	@Success	200	{object}	membersResponse
 //	@Failure	404	{object}	map[string]string
+//	@Failure	413	{object}	map[string]string	"The group has more members than one response may carry"
 //	@Router	/groups/{id}/members [get]
 func (a *App) GetMembersHandler(c echo.Context) error {
 	groupID := c.Param("id")
@@ -72,13 +80,40 @@ func (a *App) GetMembersHandler(c echo.Context) error {
 		return c.JSON(http.StatusOK, &membersResponse{Members: []model.Subject{}, Redacted: true})
 	}
 
+	limit, err := intParam(c, "limit", 0)
+	if err != nil {
+		return err
+	}
+	offset, err := intParam(c, "offset", 0)
+	if err != nil {
+		return err
+	}
+
 	ctx := c.Request().Context()
-	refs, err := a.store.ListMembers(ctx, groupID)
+	total, err := a.store.CountMembers(ctx, groupID)
 	if err != nil {
 		return storeError(err)
 	}
 
-	return c.JSON(http.StatusOK, &membersResponse{Members: a.hydrateMembers(ctx, refs)})
+	// Refusing beats truncating. group-propagator replaces an iRODS group's
+	// membership from this response, so a page it mistook for the whole list
+	// would delete everyone past the first page. A caller that wants the rest
+	// has to ask for it.
+	if limit == 0 && total > a.maxMemberListing {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, fmt.Sprintf(
+			"the group has %d members, more than the %d one response carries; page through it with limit and offset",
+			total, a.maxMemberListing))
+	}
+	if limit == 0 || limit > a.maxMemberListing {
+		limit = a.maxMemberListing
+	}
+
+	refs, err := a.store.ListMembers(ctx, groupID, store.MemberFilter{Limit: limit, Offset: offset})
+	if err != nil {
+		return storeError(err)
+	}
+
+	return c.JSON(http.StatusOK, &membersResponse{Members: a.hydrateMembers(ctx, refs), Total: total})
 }
 
 // hydrateMembers turns member references into subjects: users are looked up in
