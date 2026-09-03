@@ -264,6 +264,7 @@ func (a *App) registerRoutes() {
 	subjects.POST("/lookup", a.LookupSubjectsHandler)
 	subjects.GET("/:subject-id", a.GetSubjectHandler)
 	subjects.GET("/:subject-id/groups", a.SubjectGroupsHandler)
+	subjects.GET("/:subject-id/permissions", a.SubjectPermissionsHandler)
 }
 
 // Router returns the underlying echo router so it can be served.

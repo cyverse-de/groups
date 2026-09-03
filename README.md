@@ -212,6 +212,11 @@ Subjects:
 - `GET /subjects/:subject-id` — get a subject.
 - `GET /subjects/:subject-id/groups?group_type=` — list the groups a subject
   belongs to, including those reached through nesting.
+- `GET /subjects/:subject-id/permissions` — list the level the subject holds on
+  every group, as `{permissions: [{group_id, level}]}`, with permissions
+  inherited through group membership included. A caller may ask about itself; an
+  `admin.users` account may ask about anyone. It answers in one request what a
+  listing would otherwise assemble one `GET /groups/:id/permissions` at a time.
 
 ## Events
 

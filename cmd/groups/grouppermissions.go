@@ -20,6 +20,17 @@ type groupPermissionsResponse struct {
 	Permissions []groupPermission `json:"permissions"`
 }
 
+// subjectPermission is the level a subject holds on one group.
+type subjectPermission struct {
+	GroupID string `json:"group_id"`
+	Level   string `json:"level"`
+}
+
+// subjectPermissionsResponse wraps a subject's group permissions.
+type subjectPermissionsResponse struct {
+	Permissions []subjectPermission `json:"permissions"`
+}
+
 // permissionRequest is the body accepted when granting a permission.
 type permissionRequest struct {
 	Level string `json:"level"`
@@ -58,6 +69,47 @@ func (a *App) ListPermissionsHandler(c echo.Context) error {
 		out = append(out, groupPermission{Subject: p.Subject, Level: p.PermissionLevel})
 	}
 	return c.JSON(http.StatusOK, &groupPermissionsResponse{Permissions: out})
+}
+
+// SubjectPermissionsHandler handles GET /subjects/:subject-id/permissions. It
+// answers "what may this subject do across every group" in one request, which
+// callers building a listing would otherwise have to assemble one group at a
+// time from GET /groups/:id/permissions.
+//
+// Permissions inherited through group membership are included, matching what an
+// authorization check on any single group would decide.
+//
+//	@Summary	List the group permissions a subject holds
+//	@Produce	json
+//	@Param	subject-id	path	string	true	"Subject identifier (username)"
+//	@Param	user	query	string	true	"The acting user"
+//	@Success	200	{object}	subjectPermissionsResponse
+//	@Failure	403	{object}	map[string]string
+//	@Router	/subjects/{subject-id}/permissions [get]
+func (a *App) SubjectPermissionsHandler(c echo.Context) error {
+	subjectID := c.Param("subject-id")
+
+	// A subject's permissions are as revealing as the access-filtered group
+	// listing this parallels: they name every group the subject can reach,
+	// private collaborator lists included. Callers may ask about themselves;
+	// only the service accounts may ask about anyone else.
+	user := actingUser(c)
+	if subjectID != user && !a.isAdminUser(user) {
+		return echo.NewHTTPError(http.StatusForbidden,
+			"only an administrative user may list another subject's permissions")
+	}
+
+	perms, err := a.permissions.ListSubject(c.Request().Context(),
+		permissions.SubjectTypeUser, subjectID, resourceTypeGroup, true)
+	if err != nil {
+		return err
+	}
+
+	out := make([]subjectPermission, 0, len(perms))
+	for _, p := range perms {
+		out = append(out, subjectPermission{GroupID: p.ResourceName, Level: p.PermissionLevel})
+	}
+	return c.JSON(http.StatusOK, &subjectPermissionsResponse{Permissions: out})
 }
 
 // GrantPermissionHandler handles PUT /groups/:id/permissions/:subject-type/:subject-id.

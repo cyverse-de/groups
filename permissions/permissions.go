@@ -44,6 +44,16 @@ type Permission struct {
 	PermissionLevel string   `json:"permission_level"`
 }
 
+// SubjectPermission is one grant held by a subject, naming the resource rather
+// than expanding it. This is the shape the permissions service's abbreviated
+// listing returns; for a group resource the name is the group's ID.
+type SubjectPermission struct {
+	ID              string `json:"id"`
+	ResourceName    string `json:"resource_name"`
+	ResourceType    string `json:"resource_type"`
+	PermissionLevel string `json:"permission_level"`
+}
+
 // Client is the set of permissions-service operations the groups service needs.
 type Client interface {
 	// EnsureResourceType registers the named resource type if it does not
@@ -64,6 +74,11 @@ type Client interface {
 
 	// ListResource returns all permissions granted on a resource.
 	ListResource(ctx context.Context, resourceType, resourceName string) ([]Permission, error)
+
+	// ListSubject returns every permission the subject holds on resources of the
+	// given type, in one request. When lookup is true and the subject is a user,
+	// permissions inherited through group membership are included.
+	ListSubject(ctx context.Context, subjectType, subjectID, resourceType string, lookup bool) ([]SubjectPermission, error)
 
 	// DeleteResource removes a resource and all permissions associated with it.
 	DeleteResource(ctx context.Context, resourceType, resourceName string) error

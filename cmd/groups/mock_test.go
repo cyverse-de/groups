@@ -220,6 +220,7 @@ type mockPermissions struct {
 	revokeFn             func(ctx context.Context, resourceType, resourceName, subjectType, subjectID string) error
 	checkFn              func(ctx context.Context, subjectType, subjectID, resourceType, resourceName, minLevel string, lookup bool) (bool, error)
 	listResourceFn       func(ctx context.Context, resourceType, resourceName string) ([]permissions.Permission, error)
+	listSubjectFn        func(ctx context.Context, subjectType, subjectID, resourceType string, lookup bool) ([]permissions.SubjectPermission, error)
 	deleteResourceFn     func(ctx context.Context, resourceType, resourceName string) error
 }
 
@@ -256,6 +257,13 @@ func (m *mockPermissions) Check(ctx context.Context, subjectType, subjectID, res
 func (m *mockPermissions) ListResource(ctx context.Context, resourceType, resourceName string) ([]permissions.Permission, error) {
 	if m.listResourceFn != nil {
 		return m.listResourceFn(ctx, resourceType, resourceName)
+	}
+	return nil, nil
+}
+
+func (m *mockPermissions) ListSubject(ctx context.Context, subjectType, subjectID, resourceType string, lookup bool) ([]permissions.SubjectPermission, error) {
+	if m.listSubjectFn != nil {
+		return m.listSubjectFn(ctx, subjectType, subjectID, resourceType, lookup)
 	}
 	return nil, nil
 }

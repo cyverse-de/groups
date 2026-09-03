@@ -877,6 +877,47 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/subjects/{subject-id}/permissions": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "List the group permissions a subject holds",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Subject identifier (username)",
+                        "name": "subject-id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The acting user",
+                        "name": "user",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.subjectPermissionsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1053,6 +1094,28 @@ const docTemplate = `{
             "properties": {
                 "level": {
                     "type": "string"
+                }
+            }
+        },
+        "main.subjectPermission": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string"
+                },
+                "level": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.subjectPermissionsResponse": {
+            "type": "object",
+            "properties": {
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/main.subjectPermission"
+                    }
                 }
             }
         },

@@ -122,3 +122,86 @@ func TestRevokePermission(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, revoked)
 }
+
+func TestSubjectPermissions(t *testing.T) {
+	t.Run("reports the level held on each group", func(t *testing.T) {
+		var got struct {
+			st, sid, rt string
+			lookup      bool
+		}
+		perms := &mockPermissions{
+			listSubjectFn: func(_ context.Context, st, sid, rt string, lookup bool) ([]permissions.SubjectPermission, error) {
+				got.st, got.sid, got.rt, got.lookup = st, sid, rt, lookup
+				return []permissions.SubjectPermission{
+					{ResourceName: "g1", ResourceType: resourceTypeGroup, PermissionLevel: "own"},
+					{ResourceName: "g2", ResourceType: resourceTypeGroup, PermissionLevel: "read"},
+				}, nil
+			},
+		}
+		app := newTestAppWith(&mockStore{}, perms)
+
+		rec := doRequestAs(app, http.MethodGet, "/subjects/alice/permissions", "", "alice")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		assert.Equal(t, permissions.SubjectTypeUser, got.st)
+		assert.Equal(t, "alice", got.sid)
+		assert.Equal(t, resourceTypeGroup, got.rt)
+		assert.True(t, got.lookup, "permissions inherited through group membership must be included")
+
+		var resp subjectPermissionsResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Permissions, 2)
+		assert.Equal(t, "g1", resp.Permissions[0].GroupID)
+		assert.Equal(t, "own", resp.Permissions[0].Level)
+		assert.Equal(t, "g2", resp.Permissions[1].GroupID)
+		assert.Equal(t, "read", resp.Permissions[1].Level)
+	})
+
+	t.Run("holds no permissions", func(t *testing.T) {
+		app := newTestAppWith(&mockStore{}, &mockPermissions{})
+
+		rec := doRequestAs(app, http.MethodGet, "/subjects/alice/permissions", "", "alice")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp subjectPermissionsResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Empty(t, resp.Permissions)
+		assert.Contains(t, rec.Body.String(), `"permissions":[]`,
+			"an empty list must not serialize as null")
+	})
+
+	t.Run("authorization", func(t *testing.T) {
+		called := false
+		perms := &mockPermissions{
+			listSubjectFn: func(context.Context, string, string, string, bool) ([]permissions.SubjectPermission, error) {
+				called = true
+				return nil, nil
+			},
+		}
+
+		for _, tc := range []struct {
+			name    string
+			subject string
+			actor   string
+			admin   bool
+			want    int
+		}{
+			{"about oneself", "alice", "alice", false, http.StatusOK},
+			{"about another subject", "alice", "bob", false, http.StatusForbidden},
+			{"about another subject as an admin user", "alice", "de_grouper", true, http.StatusOK},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				called = false
+				app := newTestAppWith(&mockStore{}, perms)
+				if tc.admin {
+					app.adminUsers = map[string]struct{}{tc.actor: {}}
+				}
+
+				rec := doRequestAs(app, http.MethodGet, "/subjects/"+tc.subject+"/permissions", "", tc.actor)
+				assert.Equal(t, tc.want, rec.Code)
+				assert.Equal(t, tc.want == http.StatusOK, called,
+					"the permissions service must not be consulted for a refused request")
+			})
+		}
+	})
+}

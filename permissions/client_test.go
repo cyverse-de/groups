@@ -95,6 +95,37 @@ func TestEnsureResourceTypeCreatesWhenAbsent(t *testing.T) {
 	assert.True(t, posted)
 }
 
+func TestListSubjectUsesTheAbbreviatedListing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/permissions/abbreviated/subjects/user/alice/group", r.URL.Path)
+		assert.Equal(t, "true", r.URL.Query().Get("lookup"))
+		_, _ = io.WriteString(w, `{"permissions":[
+			{"id":"p1","resource_name":"g1","resource_type":"group","permission_level":"own"},
+			{"id":"p2","resource_name":"g2","resource_type":"group","permission_level":"read"}]}`)
+	}))
+	defer srv.Close()
+
+	perms, err := NewClient(srv.URL).ListSubject(context.Background(), SubjectTypeUser, "alice", "group", true)
+	require.NoError(t, err)
+	require.Len(t, perms, 2)
+	assert.Equal(t, "g1", perms[0].ResourceName)
+	assert.Equal(t, LevelOwn, perms[0].PermissionLevel)
+	assert.Equal(t, "g2", perms[1].ResourceName)
+	assert.Equal(t, LevelRead, perms[1].PermissionLevel)
+}
+
+func TestListSubjectOmitsLookupWhenNotRequested(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Empty(t, r.URL.Query().Get("lookup"))
+		_, _ = io.WriteString(w, `{"permissions":[]}`)
+	}))
+	defer srv.Close()
+
+	perms, err := NewClient(srv.URL).ListSubject(context.Background(), SubjectTypeUser, "bob", "group", false)
+	require.NoError(t, err)
+	assert.Empty(t, perms)
+}
+
 func TestDeleteResourceSendsQuery(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)

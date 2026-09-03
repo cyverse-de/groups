@@ -94,6 +94,27 @@ func (c *httpClient) ListResource(ctx context.Context, resourceType, resourceNam
 	return out.Permissions, nil
 }
 
+func (c *httpClient) ListSubject(ctx context.Context, subjectType, subjectID, resourceType string, lookup bool) ([]SubjectPermission, error) {
+	// The abbreviated form names the resource instead of expanding it, which is
+	// all a caller keyed by group ID needs and keeps the response to one row per
+	// group rather than one row per group plus its subject and resource records.
+	path := fmt.Sprintf("/permissions/abbreviated/subjects/%s/%s/%s",
+		url.PathEscape(subjectType), url.PathEscape(subjectID), url.PathEscape(resourceType))
+
+	query := url.Values{}
+	if lookup {
+		query.Set("lookup", "true")
+	}
+
+	var out struct {
+		Permissions []SubjectPermission `json:"permissions"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, query, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Permissions, nil
+}
+
 func (c *httpClient) DeleteResource(ctx context.Context, resourceType, resourceName string) error {
 	query := url.Values{
 		"resource_type_name": {resourceType},

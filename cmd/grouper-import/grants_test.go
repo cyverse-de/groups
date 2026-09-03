@@ -38,6 +38,10 @@ func (m *mockPermClient) ListResource(context.Context, string, string) ([]permis
 	return m.have, nil
 }
 
+func (m *mockPermClient) ListSubject(context.Context, string, string, string, bool) ([]permissions.SubjectPermission, error) {
+	return nil, nil
+}
+
 func (m *mockPermClient) DeleteResource(context.Context, string, string) error { return nil }
 
 func heldPermission(subjectType, subjectID, level string) permissions.Permission {
