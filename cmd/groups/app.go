@@ -292,7 +292,51 @@ func (a *App) Router() *echo.Echo {
 // userinfoFromConfig builds the user-attribute client from configuration,
 // validating that the required settings are present. Keycloak no longer stores
 // groups; it is only the source of user names, emails, and institutions.
+// userinfoFromConfig builds the user-attribute client named by
+// userinfo.backend, defaulting to Keycloak.
+//
+// portal-conductor reads the directory Keycloak federates from, so both report
+// the same people. It answers a whole member listing in one request where
+// Keycloak costs one call per member, and it reports the institution, which
+// reaches Keycloak only through an LDAP attribute mapper for `o`.
 func userinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
+	switch backend := config.String("userinfo.backend"); backend {
+	case "", userinfoBackendKeycloak:
+		return keycloakUserinfoFromConfig(config)
+	case userinfoBackendPortalConductor:
+		return portalConductorUserinfoFromConfig(config)
+	default:
+		return nil, fmt.Errorf("userinfo.backend must be %q or %q, not %q",
+			userinfoBackendKeycloak, userinfoBackendPortalConductor, backend)
+	}
+}
+
+// The recognized values of userinfo.backend.
+const (
+	userinfoBackendKeycloak        = "keycloak"
+	userinfoBackendPortalConductor = "portal-conductor"
+)
+
+func portalConductorUserinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
+	cfg := userinfo.PortalConductorConfig{
+		BaseURL:  config.String("portal-conductor.base-url"),
+		Username: config.String("portal-conductor.username"),
+		Password: config.String("portal-conductor.password"),
+	}
+
+	switch {
+	case cfg.BaseURL == "":
+		return nil, fmt.Errorf("portal-conductor.base-url must be set when userinfo.backend is %q", userinfoBackendPortalConductor)
+	case cfg.Username == "":
+		return nil, fmt.Errorf("portal-conductor.username must be set when userinfo.backend is %q", userinfoBackendPortalConductor)
+	case cfg.Password == "":
+		return nil, fmt.Errorf("portal-conductor.password must be set when userinfo.backend is %q", userinfoBackendPortalConductor)
+	}
+
+	return userinfo.NewPortalConductorClient(cfg), nil
+}
+
+func keycloakUserinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
 	cfg := userinfo.Config{
 		BaseURL:      config.String("keycloak.base-url"),
 		Realm:        config.String("keycloak.realm"),

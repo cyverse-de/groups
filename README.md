@@ -223,6 +223,23 @@ Subjects:
   `admin.users` account may ask about anyone. It answers in one request what a
   listing would otherwise assemble one `GET /groups/:id/permissions` at a time.
 
+## Where user attributes come from
+
+Groups and membership live in this database; the display name, email and
+institution reported for each member come from elsewhere, selected by
+`userinfo.backend`:
+
+- **`keycloak`** (default) reads the realm through the admin API. It has no bulk
+  lookup by username, so resolving a member listing costs one HTTP call per
+  member, and it reports an institution only if the realm carries an LDAP
+  attribute mapper for `o`.
+- **`portal-conductor`** reads the same directory Keycloak federates, through
+  `POST /ldap/users/search`. One request resolves a whole listing, and the
+  institution comes straight from the directory's `o` attribute.
+
+Either way a directory outage degrades display data rather than authorization:
+members are reported by bare identifier and the listing still succeeds.
+
 ## Events
 
 When a group is created, updated, deleted, or has its membership changed, the

@@ -35,6 +35,23 @@ groups:
 users:
   suffix: "@iplantcollaborative.org"
 
+# Where the display names, emails and institutions reported for members come
+# from: "keycloak" (the default) or "portal-conductor".
+#
+# Both read the same people -- Keycloak federates the directory portal-conductor
+# queries directly -- but portal-conductor answers a whole member listing in one
+# request, where Keycloak has no bulk lookup by username and costs one call per
+# member. It also reports the institution, which reaches Keycloak only if the
+# realm carries an LDAP attribute mapper for `o`.
+userinfo:
+  backend: keycloak
+
+# Only read when userinfo.backend is portal-conductor.
+portal-conductor:
+  base-url: https://portal-conductor
+  username: groups
+  password: changeme
+
 # Keycloak connection settings. The service authenticates as a confidential
 # client using the client-credentials grant. Keycloak is only the source of user
 # attributes -- names, email addresses, and institutions -- so the service

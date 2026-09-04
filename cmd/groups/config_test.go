@@ -79,3 +79,68 @@ func TestPoolFromConfig(t *testing.T) {
 		})
 	}
 }
+
+// The backend selector decides where every display name comes from, so an
+// unrecognized value must fail startup rather than quietly picking one.
+func TestUserinfoFromConfig(t *testing.T) {
+	keycloak := map[string]any{
+		"keycloak.base-url":      "https://kc.example.org",
+		"keycloak.realm":         "CyVerse",
+		"keycloak.client-id":     "groups",
+		"keycloak.client-secret": "secret",
+	}
+	portalConductor := map[string]any{
+		"portal-conductor.base-url": "https://portal-conductor",
+		"portal-conductor.username": "groups",
+		"portal-conductor.password": "secret",
+	}
+	merge := func(maps ...map[string]any) map[string]any {
+		out := map[string]any{}
+		for _, m := range maps {
+			for k, v := range m {
+				out[k] = v
+			}
+		}
+		return out
+	}
+
+	tests := []struct {
+		name     string
+		settings map[string]any
+		wantErr  string
+	}{
+		{"defaults to keycloak", keycloak, ""},
+		{"keycloak named explicitly", merge(keycloak, map[string]any{"userinfo.backend": "keycloak"}), ""},
+		{"portal-conductor", merge(portalConductor, map[string]any{"userinfo.backend": "portal-conductor"}), ""},
+		{"unknown backend", merge(keycloak, map[string]any{"userinfo.backend": "ldap"}), "userinfo.backend"},
+		{
+			"portal-conductor without a base url",
+			merge(map[string]any{"userinfo.backend": "portal-conductor"},
+				map[string]any{"portal-conductor.username": "groups", "portal-conductor.password": "secret"}),
+			"portal-conductor.base-url",
+		},
+		{
+			"portal-conductor without credentials",
+			merge(map[string]any{"userinfo.backend": "portal-conductor"},
+				map[string]any{"portal-conductor.base-url": "https://portal-conductor"}),
+			"portal-conductor.username",
+		},
+		{"keycloak without a realm", map[string]any{"keycloak.base-url": "https://kc.example.org"}, "keycloak.realm"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k := koanf.New(".")
+			require.NoError(t, k.Load(confmap.Provider(tt.settings, "."), nil))
+
+			client, err := userinfoFromConfig(k)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, client)
+		})
+	}
+}
