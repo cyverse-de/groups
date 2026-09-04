@@ -293,21 +293,22 @@ func (a *App) Router() *echo.Echo {
 // validating that the required settings are present. Keycloak no longer stores
 // groups; it is only the source of user names, emails, and institutions.
 // userinfoFromConfig builds the user-attribute client named by
-// userinfo.backend, defaulting to Keycloak.
+// userinfo.backend, defaulting to portal-conductor.
 //
-// portal-conductor reads the directory Keycloak federates from, so both report
-// the same people. It answers a whole member listing in one request where
-// Keycloak costs one call per member, and it reports the institution, which
-// reaches Keycloak only through an LDAP attribute mapper for `o`.
+// Both backends report the same people: portal-conductor queries the directory
+// Keycloak federates. portal-conductor is the default because it answers a
+// whole member listing in one request where Keycloak costs one call per member,
+// and because it reports the institution, which reaches Keycloak only through
+// an LDAP attribute mapper for `o` that the DE's realm does not carry.
 func userinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
 	switch backend := config.String("userinfo.backend"); backend {
-	case "", userinfoBackendKeycloak:
-		return keycloakUserinfoFromConfig(config)
-	case userinfoBackendPortalConductor:
+	case "", userinfoBackendPortalConductor:
 		return portalConductorUserinfoFromConfig(config)
+	case userinfoBackendKeycloak:
+		return keycloakUserinfoFromConfig(config)
 	default:
 		return nil, fmt.Errorf("userinfo.backend must be %q or %q, not %q",
-			userinfoBackendKeycloak, userinfoBackendPortalConductor, backend)
+			userinfoBackendPortalConductor, userinfoBackendKeycloak, backend)
 	}
 }
 
@@ -326,11 +327,11 @@ func portalConductorUserinfoFromConfig(config *koanf.Koanf) (userinfo.Client, er
 
 	switch {
 	case cfg.BaseURL == "":
-		return nil, fmt.Errorf("portal-conductor.base-url must be set when userinfo.backend is %q", userinfoBackendPortalConductor)
+		return nil, fmt.Errorf("portal-conductor.base-url must be set in the configuration")
 	case cfg.Username == "":
-		return nil, fmt.Errorf("portal-conductor.username must be set when userinfo.backend is %q", userinfoBackendPortalConductor)
+		return nil, fmt.Errorf("portal-conductor.username must be set in the configuration")
 	case cfg.Password == "":
-		return nil, fmt.Errorf("portal-conductor.password must be set when userinfo.backend is %q", userinfoBackendPortalConductor)
+		return nil, fmt.Errorf("portal-conductor.password must be set in the configuration")
 	}
 
 	return userinfo.NewPortalConductorClient(cfg), nil
