@@ -224,6 +224,10 @@ func TestListGroups(t *testing.T) {
 		{"everything", store.ListFilter{}, []string{"default", "NEON", "Ecology"}},
 		{"by type", store.ListFilter{GroupType: model.GroupTypeTeam}, []string{"Ecology"}},
 		{"by owner", store.ListFilter{Owner: "test-alice"}, []string{"default"}},
+		// Uniqueness folds the owner, so a listing that matched it exactly
+		// would report nothing for a spelling LookupGroup still resolves.
+		{"by owner, different case", store.ListFilter{Owner: "TEST-Alice"}, []string{"default"}},
+		{"by owner, no such owner", store.ListFilter{Owner: "test-nobody"}, []string{}},
 		{"by name search", store.ListFilter{Search: "eco"}, []string{"Ecology"}},
 		{"search matches description", store.ListFilter{Search: "sensor"}, []string{"NEON"}},
 		{"by member", store.ListFilter{Member: "test-zed"}, []string{"default"}},

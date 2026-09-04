@@ -54,7 +54,11 @@ func (r *reader) ListGroups(ctx context.Context, f store.ListFilter) ([]model.Gr
 		where = append(where, "g.group_type = "+nextID(f.GroupType))
 	}
 	if f.Owner != "" {
-		where = append(where, "g.owner = "+nextID(f.Owner))
+		// Folded the way groups_identity_unique defines the owner, so this
+		// agrees with LookupGroup: uniqueness already treats two spellings as
+		// one owner, and an exact match would list nothing for a caller that
+		// can still look the group up by name.
+		where = append(where, "lower(coalesce(g.owner, '')) = lower("+nextID(f.Owner)+")")
 	}
 	if f.Search != "" {
 		p := nextID("%" + escapeLike(f.Search) + "%")
