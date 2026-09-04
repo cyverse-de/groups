@@ -134,7 +134,7 @@ func (a *App) hydrateMembers(ctx context.Context, refs []model.MemberRef) []mode
 		if err != nil {
 			log.WithField("context", "membership").
 				Warnf("could not resolve member names; the membership is listed without them "+
-					"(check keycloak.* settings and connectivity): %s", err)
+					"(check portal-conductor.* settings and connectivity): %s", err)
 		}
 		for _, s := range subjects {
 			byUsername[s.ID] = s

@@ -37,7 +37,7 @@ type App struct {
 
 //	@title			groups
 //	@version		0.1.0
-//	@description	Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from Keycloak.
+//	@description	Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from the directory, read through portal-conductor.
 //	@BasePath		/
 //
 // NewApp constructs the application, wires up its clients, and registers routes.
@@ -96,7 +96,7 @@ func closeStore(s store.Store) {
 }
 
 // storeFromConfig opens the group store, validating that the database is
-// configured. A missing or unreachable database is fatal: unlike Keycloak or
+// configured. A missing or unreachable database is fatal: unlike the directory or
 // AMQP, nothing the service does works without it.
 func storeFromConfig(ctx context.Context, config *koanf.Koanf) (store.Store, error) {
 	uri := config.String("db.uri")
@@ -292,33 +292,12 @@ func (a *App) Router() *echo.Echo {
 // userinfoFromConfig builds the user-attribute client from configuration,
 // validating that the required settings are present. Keycloak no longer stores
 // groups; it is only the source of user names, emails, and institutions.
-// userinfoFromConfig builds the user-attribute client named by
-// userinfo.backend, defaulting to portal-conductor.
-//
-// Both backends report the same people: portal-conductor queries the directory
-// Keycloak federates. portal-conductor is the default because it answers a
-// whole member listing in one request where Keycloak costs one call per member,
-// and because it reports the institution, which reaches Keycloak only through
-// an LDAP attribute mapper for `o` that the DE's realm does not carry.
+// userinfoFromConfig builds the client that reports display names, emails and
+// institutions. portal-conductor reads the directory directly: it resolves a
+// whole member listing in one request, and it reports the institution, which
+// reaching through Keycloak would need an LDAP attribute mapper for `o` that
+// the DE's realm does not carry.
 func userinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
-	switch backend := config.String("userinfo.backend"); backend {
-	case "", userinfoBackendPortalConductor:
-		return portalConductorUserinfoFromConfig(config)
-	case userinfoBackendKeycloak:
-		return keycloakUserinfoFromConfig(config)
-	default:
-		return nil, fmt.Errorf("userinfo.backend must be %q or %q, not %q",
-			userinfoBackendPortalConductor, userinfoBackendKeycloak, backend)
-	}
-}
-
-// The recognized values of userinfo.backend.
-const (
-	userinfoBackendKeycloak        = "keycloak"
-	userinfoBackendPortalConductor = "portal-conductor"
-)
-
-func portalConductorUserinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
 	cfg := userinfo.PortalConductorConfig{
 		BaseURL:  config.String("portal-conductor.base-url"),
 		Username: config.String("portal-conductor.username"),
@@ -335,28 +314,6 @@ func portalConductorUserinfoFromConfig(config *koanf.Koanf) (userinfo.Client, er
 	}
 
 	return userinfo.NewPortalConductorClient(cfg), nil
-}
-
-func keycloakUserinfoFromConfig(config *koanf.Koanf) (userinfo.Client, error) {
-	cfg := userinfo.Config{
-		BaseURL:      config.String("keycloak.base-url"),
-		Realm:        config.String("keycloak.realm"),
-		ClientID:     config.String("keycloak.client-id"),
-		ClientSecret: config.String("keycloak.client-secret"),
-	}
-
-	switch {
-	case cfg.BaseURL == "":
-		return nil, fmt.Errorf("keycloak.base-url must be set in the configuration")
-	case cfg.Realm == "":
-		return nil, fmt.Errorf("keycloak.realm must be set in the configuration")
-	case cfg.ClientID == "":
-		return nil, fmt.Errorf("keycloak.client-id must be set in the configuration")
-	case cfg.ClientSecret == "":
-		return nil, fmt.Errorf("keycloak.client-secret must be set in the configuration")
-	}
-
-	return userinfo.NewKeycloakClient(cfg), nil
 }
 
 // errorHandler renders errors as a consistent JSON body. Anything that is not

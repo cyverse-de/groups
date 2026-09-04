@@ -80,24 +80,19 @@ func TestPoolFromConfig(t *testing.T) {
 	}
 }
 
-// The backend selector decides where every display name comes from, so an
-// unrecognized value must fail startup rather than quietly picking one.
+// Every display name, email and institution comes from here, so a missing
+// setting must fail startup rather than leave the service reporting bare
+// identifiers for everyone.
 func TestUserinfoFromConfig(t *testing.T) {
-	keycloak := map[string]any{
-		"keycloak.base-url":      "https://kc.example.org",
-		"keycloak.realm":         "CyVerse",
-		"keycloak.client-id":     "groups",
-		"keycloak.client-secret": "secret",
-	}
-	portalConductor := map[string]any{
+	complete := map[string]any{
 		"portal-conductor.base-url": "https://portal-conductor",
 		"portal-conductor.username": "groups",
 		"portal-conductor.password": "secret",
 	}
-	merge := func(maps ...map[string]any) map[string]any {
+	without := func(key string) map[string]any {
 		out := map[string]any{}
-		for _, m := range maps {
-			for k, v := range m {
+		for k, v := range complete {
+			if k != key {
 				out[k] = v
 			}
 		}
@@ -109,22 +104,11 @@ func TestUserinfoFromConfig(t *testing.T) {
 		settings map[string]any
 		wantErr  string
 	}{
-		{"defaults to portal-conductor", portalConductor, ""},
-		{"keycloak named explicitly", merge(keycloak, map[string]any{"userinfo.backend": "keycloak"}), ""},
-		{"portal-conductor named explicitly", merge(portalConductor, map[string]any{"userinfo.backend": "portal-conductor"}), ""},
-		{"unknown backend", merge(portalConductor, map[string]any{"userinfo.backend": "ldap"}), "userinfo.backend"},
-		{"no backend and no portal-conductor settings", keycloak, "portal-conductor.base-url"},
-		{
-			"portal-conductor without a base url",
-			map[string]any{"portal-conductor.username": "groups", "portal-conductor.password": "secret"},
-			"portal-conductor.base-url",
-		},
-		{
-			"portal-conductor without credentials",
-			map[string]any{"portal-conductor.base-url": "https://portal-conductor"},
-			"portal-conductor.username",
-		},
-		{"keycloak without a realm", map[string]any{"userinfo.backend": "keycloak", "keycloak.base-url": "https://kc.example.org"}, "keycloak.realm"},
+		{"complete", complete, ""},
+		{"no base url", without("portal-conductor.base-url"), "portal-conductor.base-url"},
+		{"no username", without("portal-conductor.username"), "portal-conductor.username"},
+		{"no password", without("portal-conductor.password"), "portal-conductor.password"},
+		{"nothing configured", map[string]any{}, "portal-conductor.base-url"},
 	}
 
 	for _, tt := range tests {

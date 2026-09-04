@@ -949,8 +949,8 @@ const docTemplate = `{
                     "description": "Database reports whether group storage is reachable. False means the\nservice cannot serve any group request.",
                     "type": "boolean"
                 },
-                "keycloak": {
-                    "description": "Keycloak reports whether user attributes are reachable. False degrades\nnames and email addresses but leaves group membership working.",
+                "directory": {
+                    "description": "Directory reports whether user attributes are reachable. False degrades\nnames, email addresses and institutions but leaves group membership\nworking.",
                     "type": "boolean"
                 },
                 "service": {
@@ -1249,7 +1249,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "groups",
-	Description:      "Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from Keycloak.",
+	Description:      "Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from the directory, read through portal-conductor.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

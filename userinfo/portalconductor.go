@@ -14,7 +14,7 @@ import (
 )
 
 // PortalConductorConfig holds the settings needed to reach portal-conductor,
-// which reads the same directory Keycloak federates from.
+// which reads the DE's user directory.
 type PortalConductorConfig struct {
 	BaseURL  string
 	Username string
@@ -22,10 +22,8 @@ type PortalConductorConfig struct {
 }
 
 // portalConductorClient reads user attributes through portal-conductor's LDAP
-// API. Where Keycloak has no bulk lookup by username -- one HTTP call per user,
-// so listing a large group costs one call per member -- portal-conductor answers
-// a whole listing in one request. It also reports the institution, which reaches
-// Keycloak only if the realm has an LDAP mapper for the `o` attribute.
+// API, which answers a whole member listing in one request and reports the
+// institution from the directory's `o` attribute.
 type portalConductorClient struct {
 	baseURL string
 	cfg     PortalConductorConfig
@@ -54,8 +52,8 @@ type userLDAPInfo struct {
 }
 
 // toSubject converts a portal-conductor user record to a subject. The name is
-// the username rather than the common name, matching what the Keycloak-backed
-// client reports and what Grouper reported before it.
+// the username rather than the common name, which is what Grouper reported and
+// what the DE's consumers expect.
 func (u userLDAPInfo) toSubject() model.Subject {
 	deref := func(s *string) string {
 		if s == nil {

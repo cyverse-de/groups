@@ -13,15 +13,16 @@ type StatusResponse struct {
 	// Database reports whether group storage is reachable. False means the
 	// service cannot serve any group request.
 	Database bool `json:"database"`
-	// Keycloak reports whether user attributes are reachable. False degrades
-	// names and email addresses but leaves group membership working.
-	Keycloak bool `json:"keycloak"`
+	// Directory reports whether user attributes are reachable. False degrades
+	// names, email addresses and institutions but leaves group membership
+	// working.
+	Directory bool `json:"directory"`
 }
 
 // StatusHandler reports basic service information and backend connectivity, and
 // serves as the readiness probe target: a failed database ping answers 503 so
-// the pod leaves rotation. A failed Keycloak ping stays 200, because the service
-// can serve most reads without it -- only names and emails degrade.
+// the pod leaves rotation. A failed directory ping stays 200, because the
+// service can serve most reads without it -- only display data degrades.
 //
 //	@Summary	Service information
 //	@Description	Returns the service name, version, and backend connectivity. Responds 503 when the database is unreachable.
@@ -37,10 +38,10 @@ func (a *App) StatusHandler(c echo.Context) error {
 		log.WithField("context", "status").
 			Errorf("database ping failed; no group request can be served until it recovers (check db.uri and database health): %s", dbErr)
 	}
-	kcErr := a.userinfo.Ping(ctx)
-	if kcErr != nil {
+	dirErr := a.userinfo.Ping(ctx)
+	if dirErr != nil {
 		log.WithField("context", "status").
-			Warnf("keycloak ping failed; member names and emails will be degraded (check keycloak.* settings and connectivity): %s", kcErr)
+			Warnf("directory ping failed; member names, emails and institutions will be degraded (check portal-conductor.* settings and connectivity): %s", dirErr)
 	}
 
 	code := http.StatusOK
@@ -48,10 +49,10 @@ func (a *App) StatusHandler(c echo.Context) error {
 		code = http.StatusServiceUnavailable
 	}
 	return c.JSON(code, &StatusResponse{
-		Service:  serviceName,
-		Version:  version,
-		Database: dbErr == nil,
-		Keycloak: kcErr == nil,
+		Service:   serviceName,
+		Version:   version,
+		Database:  dbErr == nil,
+		Directory: dirErr == nil,
 	})
 }
 

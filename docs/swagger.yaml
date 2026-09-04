@@ -7,10 +7,11 @@ definitions:
           Database reports whether group storage is reachable. False means the
           service cannot serve any group request.
         type: boolean
-      keycloak:
+      directory:
         description: |-
-          Keycloak reports whether user attributes are reachable. False degrades
-          names and email addresses but leaves group membership working.
+          Directory reports whether user attributes are reachable. False degrades
+          names, email addresses and institutions but leaves group membership
+          working.
         type: boolean
       service:
         type: string
@@ -221,7 +222,8 @@ definitions:
 info:
   contact: {}
   description: Group management API for the CyVerse Discovery Environment. Groups
-    live in the permissions schema of the DE database; user attributes come from Keycloak.
+    live in the permissions schema of the DE database; user attributes come from the
+    directory, read through portal-conductor.
   title: groups
   version: 0.1.0
 paths:

@@ -11,20 +11,20 @@ import (
 )
 
 // The status endpoint is the readiness probe target, so a dead database must
-// turn into a 503 that takes the pod out of rotation. Keycloak staying up is
+// turn into a 503 that takes the pod out of rotation. The directory staying up is
 // not required to serve group requests, so its failure reports degraded but
 // still answers 200.
 func TestStatusHandler(t *testing.T) {
 	tests := []struct {
-		name         string
-		dbErr, kcErr error
-		wantCode     int
-		wantDB       bool
-		wantKC       bool
+		name          string
+		dbErr, dirErr error
+		wantCode      int
+		wantDB        bool
+		wantDir       bool
 	}{
-		{name: "healthy", wantCode: http.StatusOK, wantDB: true, wantKC: true},
-		{name: "database down", dbErr: assert.AnError, wantCode: http.StatusServiceUnavailable, wantKC: true},
-		{name: "keycloak down", kcErr: assert.AnError, wantCode: http.StatusOK, wantDB: true},
+		{name: "healthy", wantCode: http.StatusOK, wantDB: true, wantDir: true},
+		{name: "database down", dbErr: assert.AnError, wantCode: http.StatusServiceUnavailable, wantDir: true},
+		{name: "directory down", dirErr: assert.AnError, wantCode: http.StatusOK, wantDB: true},
 	}
 
 	for _, tt := range tests {
@@ -33,7 +33,7 @@ func TestStatusHandler(t *testing.T) {
 				pingFn: func(context.Context) error { return tt.dbErr },
 			})
 			app.userinfo = &mockUserInfo{
-				pingFn: func(context.Context) error { return tt.kcErr },
+				pingFn: func(context.Context) error { return tt.dirErr },
 			}
 
 			rec := doRequestAs(app, http.MethodGet, "/", "", "")
@@ -42,7 +42,7 @@ func TestStatusHandler(t *testing.T) {
 			var resp StatusResponse
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 			assert.Equal(t, tt.wantDB, resp.Database)
-			assert.Equal(t, tt.wantKC, resp.Keycloak)
+			assert.Equal(t, tt.wantDir, resp.Directory)
 		})
 	}
 }

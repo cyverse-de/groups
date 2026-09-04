@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from Keycloak.",
+        "description": "Group management API for the CyVerse Discovery Environment. Groups live in the permissions schema of the DE database; user attributes come from the directory, read through portal-conductor.",
         "title": "groups",
         "contact": {},
         "version": "0.1.0"
@@ -942,8 +942,8 @@
                     "description": "Database reports whether group storage is reachable. False means the\nservice cannot serve any group request.",
                     "type": "boolean"
                 },
-                "keycloak": {
-                    "description": "Keycloak reports whether user attributes are reachable. False degrades\nnames and email addresses but leaves group membership working.",
+                "directory": {
+                    "description": "Directory reports whether user attributes are reachable. False degrades\nnames, email addresses and institutions but leaves group membership\nworking.",
                     "type": "boolean"
                 },
                 "service": {

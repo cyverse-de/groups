@@ -10,10 +10,12 @@ replacement for `iplant-groups` (which is backed by Grouper).
   service owns. Co-locating them lets a permission lookup expand a user to their
   groups with a join instead of a call to another service. The schema is defined
   in [`de-database`](https://github.com/cyverse-de/de-database).
-- User attributes — names, email addresses, institutions — come from Keycloak,
-  read-only. A Keycloak outage degrades display data rather than authorization,
-  with one deliberate exception: adding a member who has no subject row yet
-  requires Keycloak, because that is where the username is verified. See
+- User attributes — names, email addresses, institutions — come from the user
+  directory, read-only, through
+  [portal-conductor](https://github.com/cyverse-de/portal-conductor). A
+  directory outage degrades display data rather than authorization, with one
+  deliberate exception: adding a member who has no subject row yet needs the
+  directory, because that is where the username is verified. See
   [Member validation](#member-validation).
 - A group's identity is structured: a type (`collaborator_list`, `team`,
   `community`, or `system`), an owning user for the types that have one, and a
@@ -101,7 +103,7 @@ accumulated. Notable consequences:
   produces a clean-looking run with groups silently missing.
 - Membership is written through this service's own store, so identifier
   validation, DE-user correlation, and closure maintenance have one
-  implementation. The Keycloak check does not apply: Grouper is the source of
+  implementation. The directory check does not apply: Grouper is the source of
   truth for the import, and rejecting a member the directory has forgotten would
   silently shrink membership.
 
@@ -128,7 +130,7 @@ go build ./...    # build all packages
 
 See [`configs/default.yml`](configs/default.yml) for configuration options.
 Environment variables are read with the `GROUPS_` prefix (e.g.
-`GROUPS_KEYCLOAK_CLIENT_SECRET`).
+`GROUPS_PORTAL_CONDUCTOR_PASSWORD`).
 
 The Swagger docs in `docs/` are generated from the handler annotations and
 checked in so that local builds work without extra steps. Run `just docs` after
@@ -188,17 +190,17 @@ group that already contains it returns a conflict.
 Adding a member whose identifier has no `subjects` row would create one. Because
 nothing else constrains that identifier, a typo would otherwise become a
 permanent subject row and a member who is nobody, with no error. So before
-creating a subject row, the service verifies the username in Keycloak:
+creating a subject row, the service verifies the username in the directory:
 
 - Identifiers that already have a subject row are **not** re-validated. They are
   either groups, users vetted when their row was created, or users imported from
   Grouper who may since have left the directory — none of which should block a
   membership change.
-- An identifier Keycloak does not resolve is reported as a failed member in bulk
+- An identifier the directory does not resolve is reported as a failed member in bulk
   operations, and returns 400 on `PUT /groups/:id/members/:subject`.
 - **Removal is never validated**, so a user who has left the directory can still
   be removed from a group.
-- If Keycloak cannot be reached, the add fails with 502 rather than creating
+- If the directory cannot be reached, the add fails with 502 rather than creating
   unverifiable subject rows. This is the one place a directory outage blocks a
   write.
 
@@ -212,8 +214,8 @@ Subjects:
 
 - `GET /subjects?search=` — search subjects.
 - `POST /subjects/lookup` — look up multiple subjects by ID (`{subject_ids: [...]}`).
-  Keycloak has no bulk lookup by username, so each ID costs a round trip to it
-  and the list is capped like a bulk membership request.
+  The list is capped like a bulk membership request, so one call cannot ask the
+  directory for an unbounded number of people.
 - `GET /subjects/:subject-id` — get a subject.
 - `GET /subjects/:subject-id/groups?group_type=` — list the groups a subject
   belongs to, including those reached through nesting.
@@ -226,20 +228,13 @@ Subjects:
 ## Where user attributes come from
 
 Groups and membership live in this database; the display name, email and
-institution reported for each member come from elsewhere, selected by
-`userinfo.backend`:
+institution reported for each member come from the directory, read through
+[portal-conductor](https://github.com/cyverse-de/portal-conductor)'s
+`POST /ldap/users/search`. One request resolves a whole listing, and the
+institution comes from the directory's `o` attribute.
 
-- **`portal-conductor`** (default) reads the directory Keycloak federates,
-  through `POST /ldap/users/search`. One request resolves a whole listing, and
-  the institution comes straight from the directory's `o` attribute.
-- **`keycloak`** reads the realm through the admin API. It has no bulk lookup by
-  username, so resolving a member listing costs one HTTP call per member, and it
-  reports an institution only if the realm carries an LDAP attribute mapper for
-  `o` — the DE's realm does not, so under this backend the institution is always
-  empty.
-
-Either way a directory outage degrades display data rather than authorization:
-members are reported by bare identifier and the listing still succeeds.
+A directory outage degrades display data rather than authorization: members are
+reported by bare identifier and the listing still succeeds.
 
 ## Events
 
